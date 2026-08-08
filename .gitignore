@@ -1,0 +1,28 @@
+# Local secrets
+.env
+
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+.mypy_cache/
+
+# Virtual environments
+.venv/
+venv/
+env/
+anaconda_projects/
+
+# Jupyter
+.ipynb_checkpoints/
+
+# Local datasets and generated outputs
+data/raw/*.csv
+data/processed/*.csv
+
+# Editors and operating systems
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
