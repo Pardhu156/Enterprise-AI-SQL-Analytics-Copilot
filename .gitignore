@@ -1,5 +1,7 @@
 # Local secrets
 .env
+.env.*
+!.env.example
 
 # Python
 __pycache__/
@@ -20,6 +22,7 @@ anaconda_projects/
 # Local datasets and generated outputs
 data/raw/*.csv
 data/processed/*.csv
+evaluation/results/
 
 # Editors and operating systems
 .DS_Store

@@ -1,8 +1,8 @@
 # Enterprise AI SQL Analytics Copilot
 
-**Current milestone:** Phase 1 — Data and PostgreSQL Foundation
+**Current milestone:** Phase 2 — LLM-Powered Text-to-SQL Engine
 
-This repository builds a reproducible analytical data layer for an enterprise-style SQL copilot. Phase 1 turns the public Olist Brazilian E-Commerce CSVs into conservatively cleaned files, a relational PostgreSQL model, reusable analytical views, and a benchmark suite of manually verified business questions. It deliberately contains no LLM, Text-to-SQL, API, UI, container, or CI/CD implementation.
+This repository builds an enterprise-style analytics copilot on the Olist Brazilian E-Commerce dataset. Phase 1 provides the reproducible PostgreSQL data foundation. Phase 2 adds a schema-aware LLM pipeline that generates PostgreSQL, validates it as read-only, executes it with database-level safety controls, and evaluates it against manually verified business questions. Frontends, dashboards, APIs, RAG, forecasting, deployment, and CI/CD remain out of scope.
 
 ## Dataset
 
@@ -53,12 +53,27 @@ The processing step standardizes column labels, removes only exact duplicate row
 │   ├── schema.sql                   # tables, keys, constraints, indexes
 │   ├── views.sql                    # reusable business views
 │   └── benchmark_queries.sql        # 22 ground-truth analytical queries
+├── evaluation/
+│   ├── benchmark_questions.json     # structured Phase 1 benchmark suite
+│   └── evaluate_text_to_sql.py      # execution-based evaluator
 ├── notebooks/
 │   └── data_exploration.ipynb       # data quality exploration
+├── scripts/
+│   └── ask.py                       # interactive/one-shot Text-to-SQL CLI
 ├── src/
 │   ├── data_processing.py           # CSV cleaning pipeline
 │   ├── db_config.py                 # environment-only DB configuration
-│   └── load_postgres.py             # transactional bulk loader
+│   ├── load_postgres.py             # transactional bulk loader
+│   └── text_to_sql/
+│       ├── schema_manager.py        # live PostgreSQL introspection
+│       ├── prompt_builder.py        # generation and repair prompts
+│       ├── llm_client.py            # provider-neutral LLM interface
+│       ├── sql_generator.py         # generation and SQL extraction
+│       ├── sql_validator.py         # AST safety/schema validation
+│       ├── sql_executor.py          # bounded read-only execution
+│       ├── sql_repair.py            # one controlled repair attempt
+│       └── pipeline.py              # end-to-end orchestration
+├── tests/                            # API-free unit tests
 ├── .env.example
 ├── .gitignore
 ├── requirements.txt
@@ -95,7 +110,7 @@ Foreign keys enforce relationships that are reliable in the source data. The pro
 
 Requirements are Python 3.10+ and PostgreSQL 13+.
 
-1. Create and activate a virtual environment, then install Phase 1 dependencies:
+1. Create and activate a virtual environment, then install project dependencies:
 
    ```bash
    python -m venv .venv
@@ -121,6 +136,11 @@ Requirements are Python 3.10+ and PostgreSQL 13+.
    DB_NAME=olist_analytics
    DB_USER=postgres
    DB_PASSWORD=your_real_local_password
+   LLM_PROVIDER=gemini
+   LLM_MODEL=gemini-3.5-flash
+   LLM_API_KEY=your_gemini_api_key
+   SQL_STATEMENT_TIMEOUT_MS=15000
+   SQL_MAX_ROWS=1000
    ```
 
    `.env` is ignored by Git. Credentials are never hardcoded in source code.
@@ -181,6 +201,92 @@ psql -d olist_analytics -f database/benchmark_queries.sql
 
 The 22 queries provide ground truth for Phase 2 and include total and monthly revenue, category and seller rankings, state demand and order value, reviews, late-delivery rates, delivery-rating relationships, payment behavior, freight costs, delivery time, monthly volume, products, repeat customers, cancellations, and geographic delivery performance. Each query uses explicit columns and aliases and includes its natural-language question as a SQL comment.
 
+## Phase 2 — LLM-Powered Text-to-SQL Engine
+
+Phase 2 accepts a business question and returns the generated SQL, final executed SQL, validation status, rows, columns, execution time, truncation status, repair status, and any error. It does not generate a narrative business explanation yet.
+
+```mermaid
+flowchart TD
+    Q["User Question"] --> S["Schema Manager"]
+    S --> P["Prompt Builder"]
+    P --> L["LLM"]
+    L --> G["SQL Generator"]
+    G --> V["Safety Validator"]
+    V -->|"validated"| DB["PostgreSQL (read-only transaction)"]
+    V -->|"rejected"| E["Structured Error"]
+    DB -->|"success"| R["Structured Query Result"]
+    DB -->|"SQL error"| X["SQL Repair (maximum once)"]
+    X --> V2["Safety Validator"]
+    V2 -->|"validated"| DB2["PostgreSQL (read-only transaction)"]
+    V2 -->|"rejected"| E
+    DB2 --> R
+    DB2 -->|"error"| E
+```
+
+### Schema-aware generation
+
+`SchemaManager` queries PostgreSQL metadata at runtime for public tables, views, columns, data types, primary keys, foreign keys, and relation comments. It serializes only this compact metadata for the LLM, so generated SQL targets the actual Phase 1 database rather than a duplicated hardcoded schema.
+
+The provider-neutral client currently implements Google Gemini using the official `google-genai` Python SDK. `LLM_PROVIDER`, `LLM_MODEL`, and `LLM_API_KEY` select it without hardcoding secrets or coupling the rest of the pipeline to the SDK. The default `gemini-3.5-flash` model has a limited free tier suitable for development and evaluation; quotas and model availability remain controlled by Google. Google states that free-tier content may be used to improve its products, so do not submit sensitive enterprise questions or schema details through the free tier.
+
+### Safety model
+
+Every generated and repaired query goes through the same `sqlglot` PostgreSQL AST validator. It permits one `SELECT` or `WITH ... SELECT`, rejects multiple statements, comments, wildcard projections, unknown relations, invalid qualified columns, modifying/admin AST nodes, privileged functions, and non-public schemas.
+
+Defense in depth continues in PostgreSQL:
+
+- each query runs in a `READ ONLY` transaction;
+- `SQL_STATEMENT_TIMEOUT_MS` limits server execution time (default `15000`);
+- `SQL_MAX_ROWS` limits fetched rows (default `1000`);
+- database failures are reported rather than swallowed;
+- only a successful validation result can reach the executor.
+
+If PostgreSQL rejects otherwise-safe generated SQL, the error, original question, original SQL, and live schema context are sent for at most one repair. The repaired SQL is validated again before execution. Validation failures are never repaired into execution, and no retry loop is possible.
+
+### Run the CLI
+
+Create a Gemini API key in Google AI Studio, add the Gemini settings to `.env`, then ask interactively:
+
+```bash
+python scripts/ask.py
+```
+
+Or supply the question directly:
+
+```bash
+python scripts/ask.py "Which five categories generated the most revenue?"
+```
+
+Disable automatic repair for diagnostics with `--no-repair`.
+
+### Run the benchmark evaluation
+
+`evaluation/benchmark_questions.json` contains all 22 Phase 1 questions and their verified reference SQL. The evaluator runs generated and reference queries, compares result values rather than SQL strings, tolerates small floating-point differences, respects reference ordering, and records only measured metrics.
+
+Run the complete benchmark:
+
+```bash
+python evaluation/evaluate_text_to_sql.py
+```
+
+Run a low-cost smoke evaluation first:
+
+```bash
+python evaluation/evaluate_text_to_sql.py --limit 3
+```
+
+Results are written to `evaluation/results/latest.json`, which is ignored by Git. Reported metrics include valid SQL rate, execution success rate, execution accuracy, repair rate, and average successful-query latency. No metric exists until the corresponding evaluation is actually executed.
+
+### Run tests
+
+Unit tests use fake generators, executors, and repairers, so they do not make paid LLM calls:
+
+```bash
+python -m pytest -q
+```
+
+They cover safe queries and CTEs, destructive statements, multiple statements, hidden comments, wildcard projections, unknown schema elements, malformed and empty output, Markdown extraction, schema serialization, database errors, repair validation, and the one-repair limit.
+
 ## Next milestone
 
-Phase 2 will build the LLM-powered Text-to-SQL engine and evaluate its generated SQL against these benchmark questions. That application layer is intentionally out of scope for this milestone.
+Phase 3 will add AI-generated business explanations and interactive visualizations. Those features are intentionally not part of Phase 2.

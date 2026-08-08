@@ -1,0 +1,134 @@
+[
+  {
+    "id": 1,
+    "question": "What is total revenue?",
+    "reference_sql": "SELECT\n    SUM(vor.item_revenue) AS total_item_revenue\nFROM vw_order_revenue AS vor\nWHERE vor.order_status NOT IN ('canceled', 'unavailable');",
+    "category": "aggregation"
+  },
+  {
+    "id": 2,
+    "question": "What is the monthly revenue trend?",
+    "reference_sql": "SELECT\n    vmr.revenue_month,\n    vmr.order_count,\n    vmr.item_revenue,\n    vmr.average_order_item_value\nFROM vw_monthly_revenue AS vmr\nORDER BY vmr.revenue_month;",
+    "category": "time_series"
+  },
+  {
+    "id": 3,
+    "question": "Which product categories generate the most revenue?",
+    "reference_sql": "SELECT\n    vcp.category_name,\n    vcp.item_revenue,\n    vcp.order_count,\n    vcp.item_count\nFROM vw_category_performance AS vcp\nORDER BY vcp.item_revenue DESC NULLS LAST, vcp.category_name\nLIMIT 20;",
+    "category": "ranking"
+  },
+  {
+    "id": 4,
+    "question": "Who are the top 10 sellers by revenue?",
+    "reference_sql": "SELECT\n    vsp.seller_id,\n    vsp.seller_city,\n    vsp.seller_state,\n    vsp.item_revenue,\n    vsp.order_count\nFROM vw_seller_performance AS vsp\nORDER BY vsp.item_revenue DESC NULLS LAST, vsp.seller_id\nLIMIT 10;",
+    "category": "ranking"
+  },
+  {
+    "id": 5,
+    "question": "Which customer states generate the most orders?",
+    "reference_sql": "SELECT\n    c.customer_state,\n    COUNT(*) AS order_count\nFROM orders AS o\nJOIN customers AS c ON c.customer_id = o.customer_id\nWHERE o.order_status NOT IN ('canceled', 'unavailable')\nGROUP BY c.customer_state\nORDER BY order_count DESC, c.customer_state;",
+    "category": "geography"
+  },
+  {
+    "id": 6,
+    "question": "What is the average order value?",
+    "reference_sql": "SELECT\n    AVG(vor.item_revenue) AS average_order_value\nFROM vw_order_revenue AS vor\nWHERE vor.order_status NOT IN ('canceled', 'unavailable')\n  AND vor.item_count > 0;",
+    "category": "aggregation"
+  },
+  {
+    "id": 7,
+    "question": "Which categories have the highest average review score?",
+    "reference_sql": "SELECT\n    vcp.category_name,\n    vcp.average_review_score,\n    vcp.order_count\nFROM vw_category_performance AS vcp\nWHERE vcp.average_review_score IS NOT NULL\nORDER BY vcp.average_review_score DESC, vcp.order_count DESC, vcp.category_name\nLIMIT 20;",
+    "category": "ranking"
+  },
+  {
+    "id": 8,
+    "question": "Which sellers have high revenue but low ratings?",
+    "reference_sql": "WITH seller_thresholds AS (\n    SELECT\n        PERCENTILE_CONT(0.75) WITHIN GROUP (ORDER BY vsp.item_revenue) AS high_revenue_cutoff,\n        AVG(vsp.average_review_score) AS portfolio_average_rating\n    FROM vw_seller_performance AS vsp\n    WHERE vsp.average_review_score IS NOT NULL\n)\nSELECT\n    vsp.seller_id,\n    vsp.seller_city,\n    vsp.seller_state,\n    vsp.item_revenue,\n    vsp.order_count,\n    vsp.average_review_score\nFROM vw_seller_performance AS vsp\nCROSS JOIN seller_thresholds AS st\nWHERE vsp.item_revenue >= st.high_revenue_cutoff\n  AND vsp.average_review_score < st.portfolio_average_rating\nORDER BY vsp.item_revenue DESC, vsp.average_review_score ASC;",
+    "category": "segmentation"
+  },
+  {
+    "id": 9,
+    "question": "What percentage of delivered orders were late?",
+    "reference_sql": "SELECT\n    COUNT(*) FILTER (WHERE vdp.was_late) AS late_order_count,\n    COUNT(*) AS delivered_order_count,\n    ROUND(\n        100.0 * COUNT(*) FILTER (WHERE vdp.was_late) / NULLIF(COUNT(*), 0),\n        2\n    ) AS late_delivery_percentage\nFROM vw_delivery_performance AS vdp;",
+    "category": "delivery"
+  },
+  {
+    "id": 10,
+    "question": "Are delayed deliveries associated with lower review scores?",
+    "reference_sql": "SELECT\n    CASE WHEN vrdr.was_late THEN 'late' ELSE 'on_time_or_early' END AS delivery_status,\n    COUNT(*) AS reviewed_order_count,\n    AVG(vrdr.average_review_score) AS average_review_score\nFROM vw_review_delivery_relationship AS vrdr\nGROUP BY CASE WHEN vrdr.was_late THEN 'late' ELSE 'on_time_or_early' END\nORDER BY delivery_status;",
+    "category": "correlation"
+  },
+  {
+    "id": 11,
+    "question": "Which payment method is used most often?",
+    "reference_sql": "SELECT\n    vps.payment_type,\n    vps.order_count,\n    vps.payment_record_count,\n    vps.total_payment_value\nFROM vw_payment_summary AS vps\nORDER BY vps.order_count DESC, vps.payment_type;",
+    "category": "payment"
+  },
+  {
+    "id": 12,
+    "question": "What is the average freight cost by customer state?",
+    "reference_sql": "SELECT\n    c.customer_state,\n    AVG(oi.freight_value) AS average_freight_value,\n    COUNT(*) AS item_count\nFROM order_items AS oi\nJOIN orders AS o ON o.order_id = oi.order_id\nJOIN customers AS c ON c.customer_id = o.customer_id\nWHERE o.order_status NOT IN ('canceled', 'unavailable')\nGROUP BY c.customer_state\nORDER BY average_freight_value DESC, c.customer_state;",
+    "category": "geography"
+  },
+  {
+    "id": 13,
+    "question": "Which product categories have the highest average freight cost?",
+    "reference_sql": "SELECT\n    vcp.category_name,\n    vcp.average_freight_value,\n    vcp.item_count\nFROM vw_category_performance AS vcp\nORDER BY vcp.average_freight_value DESC NULLS LAST, vcp.category_name\nLIMIT 20;",
+    "category": "ranking"
+  },
+  {
+    "id": 14,
+    "question": "What is the average delivery time?",
+    "reference_sql": "SELECT\n    AVG(vdp.delivery_days) AS average_delivery_days,\n    PERCENTILE_CONT(0.5) WITHIN GROUP (ORDER BY vdp.delivery_days) AS median_delivery_days\nFROM vw_delivery_performance AS vdp;",
+    "category": "delivery"
+  },
+  {
+    "id": 15,
+    "question": "Which months have the highest order volume?",
+    "reference_sql": "SELECT\n    DATE_TRUNC('month', o.order_purchase_timestamp)::DATE AS purchase_month,\n    COUNT(*) AS order_count\nFROM orders AS o\nWHERE o.order_status NOT IN ('canceled', 'unavailable')\nGROUP BY DATE_TRUNC('month', o.order_purchase_timestamp)::DATE\nORDER BY order_count DESC, purchase_month\nLIMIT 12;",
+    "category": "time_series"
+  },
+  {
+    "id": 16,
+    "question": "What are the top-selling products?",
+    "reference_sql": "SELECT\n    oi.product_id,\n    COALESCE(pct.product_category_name_english, p.product_category_name, 'unknown') AS category_name,\n    COUNT(*) AS units_sold,\n    COUNT(DISTINCT oi.order_id) AS order_count,\n    SUM(oi.price) AS item_revenue\nFROM order_items AS oi\nJOIN orders AS o ON o.order_id = oi.order_id\nJOIN products AS p ON p.product_id = oi.product_id\nLEFT JOIN product_category_translation AS pct\n    ON pct.product_category_name = p.product_category_name\nWHERE o.order_status NOT IN ('canceled', 'unavailable')\nGROUP BY\n    oi.product_id,\n    COALESCE(pct.product_category_name_english, p.product_category_name, 'unknown')\nORDER BY units_sold DESC, item_revenue DESC, oi.product_id\nLIMIT 20;",
+    "category": "ranking"
+  },
+  {
+    "id": 17,
+    "question": "Which sellers have the highest number of orders?",
+    "reference_sql": "SELECT\n    vsp.seller_id,\n    vsp.seller_city,\n    vsp.seller_state,\n    vsp.order_count,\n    vsp.item_revenue\nFROM vw_seller_performance AS vsp\nORDER BY vsp.order_count DESC, vsp.item_revenue DESC, vsp.seller_id\nLIMIT 20;",
+    "category": "ranking"
+  },
+  {
+    "id": 18,
+    "question": "Which states have the highest average order value?",
+    "reference_sql": "SELECT\n    vor.customer_state,\n    COUNT(*) AS order_count,\n    AVG(vor.item_revenue) AS average_order_value,\n    SUM(vor.item_revenue) AS total_item_revenue\nFROM vw_order_revenue AS vor\nWHERE vor.order_status NOT IN ('canceled', 'unavailable')\n  AND vor.item_count > 0\nGROUP BY vor.customer_state\nORDER BY average_order_value DESC, vor.customer_state;",
+    "category": "geography"
+  },
+  {
+    "id": 19,
+    "question": "What percentage of customers made repeat purchases?",
+    "reference_sql": "WITH customer_order_counts AS (\n    SELECT\n        c.customer_unique_id,\n        COUNT(*) AS order_count\n    FROM customers AS c\n    JOIN orders AS o ON o.customer_id = c.customer_id\n    WHERE o.order_status NOT IN ('canceled', 'unavailable')\n    GROUP BY c.customer_unique_id\n)\nSELECT\n    COUNT(*) FILTER (WHERE coc.order_count > 1) AS repeat_customer_count,\n    COUNT(*) AS purchasing_customer_count,\n    ROUND(\n        100.0 * COUNT(*) FILTER (WHERE coc.order_count > 1) / NULLIF(COUNT(*), 0),\n        2\n    ) AS repeat_customer_percentage\nFROM customer_order_counts AS coc;",
+    "category": "customer_retention"
+  },
+  {
+    "id": 20,
+    "question": "Which categories combine high revenue with low customer ratings?",
+    "reference_sql": "WITH category_thresholds AS (\n    SELECT\n        PERCENTILE_CONT(0.75) WITHIN GROUP (ORDER BY vcp.item_revenue) AS high_revenue_cutoff,\n        AVG(vcp.average_review_score) AS portfolio_average_rating\n    FROM vw_category_performance AS vcp\n    WHERE vcp.average_review_score IS NOT NULL\n)\nSELECT\n    vcp.category_name,\n    vcp.item_revenue,\n    vcp.order_count,\n    vcp.average_review_score\nFROM vw_category_performance AS vcp\nCROSS JOIN category_thresholds AS ct\nWHERE vcp.item_revenue >= ct.high_revenue_cutoff\n  AND vcp.average_review_score < ct.portfolio_average_rating\nORDER BY vcp.item_revenue DESC, vcp.average_review_score ASC;",
+    "category": "segmentation"
+  },
+  {
+    "id": 21,
+    "question": "How does order cancellation rate vary by month?",
+    "reference_sql": "SELECT\n    DATE_TRUNC('month', o.order_purchase_timestamp)::DATE AS purchase_month,\n    COUNT(*) AS total_order_count,\n    COUNT(*) FILTER (WHERE o.order_status = 'canceled') AS canceled_order_count,\n    ROUND(\n        100.0 * COUNT(*) FILTER (WHERE o.order_status = 'canceled')\n        / NULLIF(COUNT(*), 0),\n        2\n    ) AS cancellation_percentage\nFROM orders AS o\nGROUP BY DATE_TRUNC('month', o.order_purchase_timestamp)::DATE\nORDER BY purchase_month;",
+    "category": "time_series"
+  },
+  {
+    "id": 22,
+    "question": "Which customer states experience the longest average delivery times?",
+    "reference_sql": "SELECT\n    vdp.customer_state,\n    COUNT(*) AS delivered_order_count,\n    AVG(vdp.delivery_days) AS average_delivery_days,\n    AVG(vdp.days_relative_to_estimate) AS average_days_relative_to_estimate\nFROM vw_delivery_performance AS vdp\nGROUP BY vdp.customer_state\nORDER BY average_delivery_days DESC, vdp.customer_state;",
+    "category": "geography"
+  }
+]
