@@ -1,8 +1,8 @@
 # Enterprise AI SQL Analytics Copilot
 
-**Current milestone:** Phase 2 — LLM-Powered Text-to-SQL Engine
+**Current milestone:** Phase 3 — AI Business Insights & Interactive Visualization
 
-This repository builds an enterprise-style analytics copilot on the Olist Brazilian E-Commerce dataset. Phase 1 provides the reproducible PostgreSQL data foundation. Phase 2 adds a schema-aware LLM pipeline that generates PostgreSQL, validates it as read-only, executes it with database-level safety controls, and evaluates it against manually verified business questions. Frontends, dashboards, APIs, RAG, forecasting, deployment, and CI/CD remain out of scope.
+This repository builds an enterprise-style analytics copilot on the Olist Brazilian E-Commerce dataset. Phase 1 provides the reproducible PostgreSQL data foundation. Phase 2 adds a schema-aware Gemini pipeline that generates PostgreSQL, validates it as read-only, executes it with database-level safety controls, and evaluates it against manually verified business questions. Phase 3 adds deterministic result analysis, Plotly visualizations, grounded Gemini business explanations, and a Streamlit interface. APIs, RAG, forecasting, deployment, authentication, and CI/CD remain out of scope.
 
 ## Dataset
 
@@ -60,10 +60,17 @@ The processing step standardizes column labels, removes only exact duplicate row
 │   └── data_exploration.ipynb       # data quality exploration
 ├── scripts/
 │   └── ask.py                       # interactive/one-shot Text-to-SQL CLI
+├── app.py                            # Streamlit analytics interface
 ├── src/
 │   ├── data_processing.py           # CSV cleaning pipeline
 │   ├── db_config.py                 # environment-only DB configuration
 │   ├── load_postgres.py             # transactional bulk loader
+│   ├── analytics/
+│   │   ├── result_analyzer.py        # deterministic result classification
+│   │   ├── chart_selector.py         # deterministic chart choice
+│   │   ├── visualization.py          # Plotly figure creation
+│   │   ├── insight_generator.py      # grounded Gemini explanations
+│   │   └── analytics_pipeline.py     # Phase 3 orchestration
 │   └── text_to_sql/
 │       ├── schema_manager.py        # live PostgreSQL introspection
 │       ├── prompt_builder.py        # generation and repair prompts
@@ -141,6 +148,8 @@ Requirements are Python 3.10+ and PostgreSQL 13+.
    LLM_API_KEY=your_gemini_api_key
    SQL_STATEMENT_TIMEOUT_MS=15000
    SQL_MAX_ROWS=1000
+   INSIGHT_MAX_ROWS=50
+   CHART_MAX_POINTS=100
    ```
 
    `.env` is ignored by Git. Credentials are never hardcoded in source code.
@@ -203,7 +212,7 @@ The 22 queries provide ground truth for Phase 2 and include total and monthly re
 
 ## Phase 2 — LLM-Powered Text-to-SQL Engine
 
-Phase 2 accepts a business question and returns the generated SQL, final executed SQL, validation status, rows, columns, execution time, truncation status, repair status, and any error. It does not generate a narrative business explanation yet.
+Phase 2 accepts a business question and returns the generated SQL, final executed SQL, validation status, rows, columns, execution time, truncation status, repair status, and any error. Phase 3 consumes that structured result without duplicating the Text-to-SQL pipeline.
 
 ```mermaid
 flowchart TD
@@ -285,8 +294,49 @@ Unit tests use fake generators, executors, and repairers, so they do not make pa
 python -m pytest -q
 ```
 
-They cover safe queries and CTEs, destructive statements, multiple statements, hidden comments, wildcard projections, unknown schema elements, malformed and empty output, Markdown extraction, schema serialization, database errors, repair validation, and the one-repair limit.
+They cover the Phase 2 safety and orchestration behavior plus Phase 3 result classification, chart selection, Plotly rendering, prompt grounding, context limits, and initial Streamlit rendering. Gemini is mocked in unit tests, so the test suite consumes no API quota.
+
+## Phase 3 — AI Business Insights & Interactive Visualization
+
+Phase 3 turns the verified query result into a business-facing response while keeping data access and SQL safety in the existing Phase 2 pipeline. The application constructs one Gemini client and reuses it for Text-to-SQL, the optional SQL repair, and the final explanation; there is no second provider integration.
+
+```mermaid
+flowchart TD
+    U["User"] --> UI["Streamlit"]
+    UI --> T["Gemini Text-to-SQL Pipeline"]
+    T --> V["SQL Validation"]
+    V --> DB["PostgreSQL (read-only)"]
+    DB --> A["Result Analyzer"]
+    A --> C["Chart Selector"]
+    C --> P["Plotly Visualization"]
+    DB --> I["Gemini Business Insight"]
+    P --> UI
+    I --> UI
+```
+
+### Result analysis and visualization
+
+`ResultAnalyzer` uses Python values and column-name hints to identify dimensions, metrics, identifiers, dates, and the overall result shape. `ChartSelector` then applies deterministic rules: a scalar becomes a KPI, time-series data becomes a line chart, rankings become horizontal bars, categorical comparisons become bars, two meaningful numeric measures can become a scatter plot, and one numeric distribution can become a histogram. Empty, detailed, or ambiguous results remain table-only.
+
+`VisualizationEngine` turns only supported configurations into Plotly figures. It removes null plot coordinates and limits plotted points with `CHART_MAX_POINTS` (default `100`) so large result sets do not create unusable charts. The query table still follows the Phase 2 `SQL_MAX_ROWS` safety limit.
+
+### Grounded Gemini explanations
+
+`InsightGenerator` sends the question, executed SQL, result metadata, chart description, a deterministic numeric summary, and at most `INSIGHT_MAX_ROWS` rows to the existing Gemini client. Its prompt requires Gemini to use only the returned data, preserve values and units, avoid unsupported causes, and state when evidence is insufficient or truncated. If explanation generation fails, the verified query result and chart remain available.
+
+Unit tests replace Gemini with a fake client. Running `pytest` does not use a real API key or consume Gemini quota.
+
+### Run the Streamlit application
+
+With PostgreSQL running, the Olist data loaded, and `.env` configured as described above:
+
+```bash
+source .venv/bin/activate
+streamlit run app.py
+```
+
+The interface displays the business answer first, followed by a KPI or interactive visualization, the real query result, expandable generated SQL, and execution metadata. Sample questions include total revenue, monthly revenue, category and seller rankings, order volume by state, review scores, freight cost, and the relationship between delayed delivery and review score. Every sample invokes the real Text-to-SQL pipeline; no answer or metric is hardcoded.
 
 ## Next milestone
 
-Phase 3 will add AI-generated business explanations and interactive visualizations. Those features are intentionally not part of Phase 2.
+Phase 4 is intentionally not implemented in this repository milestone.

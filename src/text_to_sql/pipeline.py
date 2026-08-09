@@ -6,7 +6,7 @@ import logging
 from dataclasses import asdict, dataclass
 from typing import Any
 
-from .llm_client import create_llm_client
+from .llm_client import LLMClient, create_llm_client
 from .schema_manager import SchemaManager
 from .sql_executor import QueryResult, SQLExecutionError, SQLExecutor
 from .sql_generator import SQLGenerator
@@ -56,15 +56,19 @@ class TextToSQLPipeline:
         self._max_repair_attempts = max_repair_attempts
 
     @classmethod
-    def from_env(cls, max_repair_attempts: int = 1) -> "TextToSQLPipeline":
+    def from_env(
+        cls,
+        max_repair_attempts: int = 1,
+        llm_client: LLMClient | None = None,
+    ) -> "TextToSQLPipeline":
         schema_manager = SchemaManager()
-        llm_client = create_llm_client()
+        resolved_llm_client = llm_client or create_llm_client()
         return cls(
             schema_manager=schema_manager,
-            generator=SQLGenerator(schema_manager, llm_client),
+            generator=SQLGenerator(schema_manager, resolved_llm_client),
             validator=SQLValidator(),
             executor=SQLExecutor(),
-            repairer=SQLRepairer(llm_client),
+            repairer=SQLRepairer(resolved_llm_client),
             max_repair_attempts=max_repair_attempts,
         )
 

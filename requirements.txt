@@ -7,3 +7,5 @@ jupyter
 google-genai
 sqlglot
 pytest
+streamlit
+plotly
