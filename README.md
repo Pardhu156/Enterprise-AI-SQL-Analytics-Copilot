@@ -1,8 +1,8 @@
 # Enterprise AI SQL Analytics Copilot
 
-**Current milestone:** Phase 3 — AI Business Insights & Interactive Visualization
+**Current milestone:** Phase 4 — FastAPI Backend & Service Architecture
 
-This repository builds an enterprise-style analytics copilot on the Olist Brazilian E-Commerce dataset. Phase 1 provides the reproducible PostgreSQL data foundation. Phase 2 adds a schema-aware Gemini pipeline that generates PostgreSQL, validates it as read-only, executes it with database-level safety controls, and evaluates it against manually verified business questions. Phase 3 adds deterministic result analysis, Plotly visualizations, grounded Gemini business explanations, and a Streamlit interface. APIs, RAG, forecasting, deployment, authentication, and CI/CD remain out of scope.
+This repository builds an enterprise-style analytics copilot on the Olist Brazilian E-Commerce dataset. Phase 1 provides the reproducible PostgreSQL data foundation. Phase 2 adds a schema-aware Gemini pipeline that generates PostgreSQL, validates it as read-only, executes it with database-level safety controls, and evaluates it against manually verified business questions. Phase 3 adds deterministic result analysis, Plotly visualizations, grounded Gemini business explanations, and a Streamlit interface. Phase 4 introduces a versioned FastAPI backend, application service layer, explicit API contracts, and an HTTP boundary between Streamlit and the analytics engine. RAG, forecasting, deployment, authentication, monitoring stacks, and CI/CD remain out of scope.
 
 ## Dataset
 
@@ -59,7 +59,8 @@ The processing step standardizes column labels, removes only exact duplicate row
 ├── notebooks/
 │   └── data_exploration.ipynb       # data quality exploration
 ├── scripts/
-│   └── ask.py                       # interactive/one-shot Text-to-SQL CLI
+│   ├── ask.py                       # interactive/one-shot Text-to-SQL CLI
+│   └── test_api_integration.py      # optional live API smoke test
 ├── app.py                            # Streamlit analytics interface
 ├── src/
 │   ├── data_processing.py           # CSV cleaning pipeline
@@ -71,6 +72,15 @@ The processing step standardizes column labels, removes only exact duplicate row
 │   │   ├── visualization.py          # Plotly figure creation
 │   │   ├── insight_generator.py      # grounded Gemini explanations
 │   │   └── analytics_pipeline.py     # Phase 3 orchestration
+│   ├── api/
+│   │   ├── main.py                  # FastAPI application factory
+│   │   ├── routes/                  # versioned analytics and health routes
+│   │   ├── schemas/                 # explicit Pydantic contracts
+│   │   ├── services/                # application orchestration service
+│   │   ├── dependencies.py          # shared Gemini/pipeline construction
+│   │   └── exception_handlers.py    # centralized safe errors
+│   ├── frontend/
+│   │   └── api_client.py            # typed Streamlit HTTP client
 │   └── text_to_sql/
 │       ├── schema_manager.py        # live PostgreSQL introspection
 │       ├── prompt_builder.py        # generation and repair prompts
@@ -144,12 +154,17 @@ Requirements are Python 3.10+ and PostgreSQL 13+.
    DB_USER=postgres
    DB_PASSWORD=your_real_local_password
    LLM_PROVIDER=gemini
-   LLM_MODEL=gemini-3.5-flash
+   LLM_MODEL=gemini-3.5-flash-lite
    LLM_API_KEY=your_gemini_api_key
    SQL_STATEMENT_TIMEOUT_MS=15000
    SQL_MAX_ROWS=1000
    INSIGHT_MAX_ROWS=50
    CHART_MAX_POINTS=100
+   API_HOST=0.0.0.0
+   API_PORT=8000
+   API_ALLOWED_ORIGINS=http://localhost:8501,http://127.0.0.1:8501
+   API_REQUEST_TIMEOUT_SECONDS=60
+   BACKEND_API_URL=http://localhost:8000
    ```
 
    `.env` is ignored by Git. Credentials are never hardcoded in source code.
@@ -236,7 +251,7 @@ flowchart TD
 
 `SchemaManager` queries PostgreSQL metadata at runtime for public tables, views, columns, data types, primary keys, foreign keys, and relation comments. It serializes only this compact metadata for the LLM, so generated SQL targets the actual Phase 1 database rather than a duplicated hardcoded schema.
 
-The provider-neutral client currently implements Google Gemini using the official `google-genai` Python SDK. `LLM_PROVIDER`, `LLM_MODEL`, and `LLM_API_KEY` select it without hardcoding secrets or coupling the rest of the pipeline to the SDK. The default `gemini-3.5-flash` model has a limited free tier suitable for development and evaluation; quotas and model availability remain controlled by Google. Google states that free-tier content may be used to improve its products, so do not submit sensitive enterprise questions or schema details through the free tier.
+The provider-neutral client currently implements Google Gemini using the official `google-genai` Python SDK. `LLM_PROVIDER`, `LLM_MODEL`, and `LLM_API_KEY` select it without hardcoding secrets or coupling the rest of the pipeline to the SDK. The example configuration uses `gemini-3.5-flash-lite`; quotas and model availability remain controlled by Google. Google states that free-tier content may be used to improve its products, so do not submit sensitive enterprise questions or schema details through the free tier.
 
 ### Safety model
 
@@ -328,15 +343,74 @@ Unit tests replace Gemini with a fake client. Running `pytest` does not use a re
 
 ### Run the Streamlit application
 
-With PostgreSQL running, the Olist data loaded, and `.env` configured as described above:
+In Phase 4, start the FastAPI backend first, then start Streamlit in a second terminal. The complete commands are documented below.
+
+```bash
+streamlit run app.py
+```
+
+The interface displays the business answer first, followed by a KPI or interactive visualization, the real query result, expandable generated SQL, and execution metadata. Sample questions include total revenue, monthly revenue, category and seller rankings, order volume by state, review scores, freight cost, and the relationship between delayed delivery and review score. Every sample reaches the real Text-to-SQL pipeline through FastAPI; no answer or metric is hardcoded.
+
+## Phase 4 — FastAPI Backend & Service Architecture
+
+Phase 4 makes FastAPI the primary interface to the application logic. Streamlit is now a frontend client: it sends a validated JSON request, receives a stable response contract, reconstructs the Plotly chart from real result rows and deterministic visualization metadata, and never imports Gemini, PostgreSQL, or the Text-to-SQL pipeline directly.
+
+```mermaid
+flowchart TD
+    U["User"] --> UI["Streamlit frontend"]
+    UI -->|"HTTP"| API["FastAPI /api/v1"]
+    API --> S["Analytics Service"]
+    S --> T["Text-to-SQL Pipeline"]
+    S --> A["Analytics Layer"]
+    T --> DB["PostgreSQL (read-only)"]
+    T --> G["Shared Gemini Client"]
+    A --> G
+    DB --> S
+    G --> S
+    S --> R["Structured API Response"]
+    R --> UI
+    UI --> O["Insight + Plotly + Table + SQL"]
+```
+
+### API routes and contracts
+
+- `GET /health` is a dependency-free liveness check.
+- `GET /health/ready` performs a lightweight `SELECT 1` against PostgreSQL and verifies that Gemini configuration exists. It does not consume Gemini quota.
+- `POST /api/v1/analytics/query` accepts a natural-language question and returns the business answer, SQL metadata, real rows, deterministic analysis and visualization configuration, and SQL/total timing.
+- `GET /docs` exposes FastAPI's interactive OpenAPI documentation.
+
+The analytics request strips whitespace, rejects empty questions, and limits questions to 2,000 characters. Optional flags can omit SQL, rows, or visualization metadata. Central exception handlers return stable error codes for validation, SQL safety rejection, database/Gemini availability, execution failure, and unexpected errors. Responses and logs include a request ID, while secrets, raw stack traces, passwords, and API keys are never returned.
+
+`API_ALLOWED_ORIGINS` is a comma-separated allowlist. The default permits only local Streamlit origins and deliberately rejects `*`. `API_REQUEST_TIMEOUT_SECONDS` controls the frontend HTTP timeout; PostgreSQL retains its separate `SQL_STATEMENT_TIMEOUT_MS` server-side query limit.
+
+### Start backend and frontend
+
+Terminal 1 — FastAPI:
+
+```bash
+source .venv/bin/activate
+uvicorn src.api.main:app --reload --host 0.0.0.0 --port 8000
+```
+
+Terminal 2 — Streamlit:
 
 ```bash
 source .venv/bin/activate
 streamlit run app.py
 ```
 
-The interface displays the business answer first, followed by a KPI or interactive visualization, the real query result, expandable generated SQL, and execution metadata. Sample questions include total revenue, monthly revenue, category and seller rankings, order volume by state, review scores, freight cost, and the relationship between delayed delivery and review score. Every sample invokes the real Text-to-SQL pipeline; no answer or metric is hardcoded.
+Open `http://localhost:8000/docs` for the API contract and `http://localhost:8501` for the frontend. For non-default addresses, keep `BACKEND_API_URL`, `API_PORT`, and `API_ALLOWED_ORIGINS` aligned.
+
+### Optional live API smoke test
+
+With the backend running and local PostgreSQL/Gemini configuration available:
+
+```bash
+python scripts/test_api_integration.py
+```
+
+This is intentionally not part of the default unit suite because it performs real PostgreSQL and Gemini calls. Unit tests replace the analytics service and external HTTP transport, so `pytest` consumes no Gemini quota.
 
 ## Next milestone
 
-Phase 4 is intentionally not implemented in this repository milestone.
+Phase 5 is intentionally not implemented in this repository milestone.

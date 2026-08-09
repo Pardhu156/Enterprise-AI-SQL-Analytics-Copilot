@@ -44,14 +44,14 @@ class AnalyticsPipeline:
         self._visualization = visualization
         self._insight_generator = insight_generator
 
-    def analyze(self, question: str) -> AnalyticsResult:
+    def analyze(self, question: str, create_figure: bool = True) -> AnalyticsResult:
         query = self._text_to_sql.ask(question)
         if query.error:
             return AnalyticsResult(question, query, None, None, None, None)
 
         analysis = self._analyzer.analyze(query.columns, query.rows, query.final_sql)
         chart = self._chart_selector.select(analysis)
-        figure = self._visualization.create(query, chart)
+        figure = self._visualization.create(query, chart) if create_figure else None
         insight: str | None = None
         insight_error: str | None = None
         try:

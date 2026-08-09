@@ -3,20 +3,16 @@
 from __future__ import annotations
 
 import logging
-import os
 from decimal import Decimal
 from typing import Any
 
 import pandas as pd
 import streamlit as st
 
-from src.analytics.analytics_pipeline import AnalyticsPipeline, AnalyticsResult
-from src.analytics.chart_selector import ChartSelector
-from src.analytics.insight_generator import InsightGenerator
-from src.analytics.result_analyzer import ResultAnalyzer
+from src.analytics.chart_selector import ChartConfig
 from src.analytics.visualization import VisualizationEngine
-from src.text_to_sql.llm_client import create_llm_client
-from src.text_to_sql.pipeline import TextToSQLPipeline
+from src.api.schemas.responses import AnalyticsQueryResponse
+from src.frontend.api_client import AnalyticsAPIClient, FrontendAPIError
 
 
 LOGGER = logging.getLogger(__name__)
@@ -64,84 +60,88 @@ st.markdown(
 
 
 @st.cache_resource(show_spinner=False)
-def build_analytics_pipeline() -> AnalyticsPipeline:
-    """Construct one shared Gemini client and all stateless Phase 2/3 services."""
-    llm_client = create_llm_client()
-    text_to_sql = TextToSQLPipeline.from_env(llm_client=llm_client)
-    max_points = _positive_env_int("CHART_MAX_POINTS", 100)
-    return AnalyticsPipeline(
-        text_to_sql=text_to_sql,
-        analyzer=ResultAnalyzer(),
-        chart_selector=ChartSelector(),
-        visualization=VisualizationEngine(max_points=max_points),
-        insight_generator=InsightGenerator(llm_client),
-    )
+def build_api_client() -> AnalyticsAPIClient:
+    """Create one persistent HTTP client for the FastAPI backend."""
+    return AnalyticsAPIClient()
 
 
-def _positive_env_int(name: str, default: int) -> int:
-    try:
-        value = int(os.getenv(name, str(default)))
-    except ValueError as exc:
-        raise ValueError(f"{name} must be an integer") from exc
-    if value <= 0:
-        raise ValueError(f"{name} must be greater than zero")
-    return value
-
-
-def render_result(result: AnalyticsResult) -> None:
-    query = result.query
-    if query.error:
-        st.error(_friendly_query_error(query.error))
-        if query.generated_sql:
-            with st.expander("View Generated SQL"):
-                st.code(query.final_sql or query.generated_sql, language="sql")
-        return
-
+def render_result(response: AnalyticsQueryResponse) -> None:
     st.markdown('<div class="section-label">AI Business Answer</div>', unsafe_allow_html=True)
-    if result.insight:
-        st.success(result.insight, icon="💡")
+    if response.answer:
+        st.success(response.answer, icon="💡")
     else:
         st.warning(
             "The query succeeded, but Gemini could not generate a business explanation. "
             "The verified results are still shown below."
         )
 
-    if result.chart and result.chart.chart_type == "kpi":
-        metric = result.chart.y
-        if metric and query.rows:
-            index = query.columns.index(metric)
+    visualization = response.visualization
+    rows = response.result.rows or []
+    if visualization and visualization.chart_type == "kpi":
+        metric = visualization.y
+        if metric and rows:
+            index = response.result.columns.index(metric)
             st.markdown('<div class="section-label">Business Metric</div>', unsafe_allow_html=True)
-            st.metric(result.chart.title, _format_metric(metric, query.rows[0][index]))
-    elif result.figure is not None:
-        st.markdown('<div class="section-label">Visualization</div>', unsafe_allow_html=True)
-        st.plotly_chart(result.figure, width="stretch", config={"displaylogo": False})
+            st.metric(visualization.title, _format_metric(metric, rows[0][index]))
+    elif visualization:
+        chart = ChartConfig(**visualization.model_dump())
+        figure = VisualizationEngine().create_from_data(
+            response.result.columns,
+            rows,
+            chart,
+        )
+        if figure is not None:
+            st.markdown('<div class="section-label">Visualization</div>', unsafe_allow_html=True)
+            st.plotly_chart(figure, width="stretch", config={"displaylogo": False})
 
     st.markdown('<div class="section-label">Query Results</div>', unsafe_allow_html=True)
-    if not query.rows:
+    if not rows:
         st.info("The query completed successfully but returned no rows.")
     else:
-        st.dataframe(_display_frame(query), width="stretch", hide_index=True)
-        if query.truncated:
+        st.dataframe(
+            _display_frame(response.result.columns, rows),
+            width="stretch",
+            hide_index=True,
+        )
+        if response.result.truncated:
             st.caption("Results were limited by SQL_MAX_ROWS for safe display.")
 
-    with st.expander("View Generated SQL"):
-        st.code(query.final_sql or query.generated_sql or "", language="sql")
-        if query.was_repaired:
-            st.caption("Gemini repaired the initial SQL once; the validated repaired query is shown.")
+    if response.sql:
+        with st.expander("View Generated SQL"):
+            st.code(response.sql.final_sql or response.sql.generated_sql or "", language="sql")
+            if response.sql.was_repaired:
+                st.caption(
+                    "Gemini repaired the initial SQL once; the validated repaired query is shown."
+                )
 
     st.markdown('<div class="section-label">Execution Details</div>', unsafe_allow_html=True)
-    metadata_columns = st.columns(4)
-    metadata_columns[0].metric("Rows", f"{query.row_count:,}")
+    metadata_columns = st.columns(5)
+    metadata_columns[0].metric("Rows", f"{response.result.row_count:,}")
     metadata_columns[1].metric(
-        "Execution",
-        f"{query.execution_time_ms:.1f} ms" if query.execution_time_ms is not None else "—",
+        "SQL execution",
+        (
+            f"{response.execution.sql_execution_time_ms:.1f} ms"
+            if response.execution.sql_execution_time_ms is not None
+            else "—"
+        ),
     )
-    metadata_columns[2].metric("SQL Validation", "Passed" if query.validation_passed else "Failed")
-    metadata_columns[3].metric("SQL Repair", "Used" if query.was_repaired else "Not needed")
+    metadata_columns[2].metric(
+        "Total request",
+        f"{response.execution.total_request_time_ms:.1f} ms",
+    )
+    metadata_columns[3].metric(
+        "SQL validation",
+        "Passed" if response.sql and response.sql.validation_passed else "Not included",
+    )
+    metadata_columns[4].metric(
+        "SQL repair",
+        "Used" if response.sql and response.sql.was_repaired else "Not needed",
+    )
+    st.caption(f"Request ID: {response.request_id}")
 
 
-def _display_frame(result: Any) -> pd.DataFrame:
-    frame = pd.DataFrame(result.rows, columns=result.columns)
+def _display_frame(columns: list[str], rows: list[list[Any]]) -> pd.DataFrame:
+    frame = pd.DataFrame(rows, columns=columns)
     return frame.map(lambda value: float(value) if isinstance(value, Decimal) else value)
 
 
@@ -170,19 +170,6 @@ def _compact_number(value: float) -> str:
     if absolute >= 1_000:
         return f"{value / 1_000:,.2f}K"
     return f"{value:,.2f}"
-
-
-def _friendly_query_error(error: str) -> str:
-    lowered = error.lower()
-    if "generation failed" in lowered:
-        return "Gemini could not generate SQL. Check the API key, model access, and free-tier quota, then retry."
-    if "validation failed" in lowered:
-        return "The generated SQL was blocked by the safety validator. Try rephrasing the question."
-    if "execution failed" in lowered:
-        return "PostgreSQL could not execute the validated query. Check the database connection or retry."
-    if "question must not be empty" in lowered:
-        return "Enter a business question before running the analysis."
-    return "The analysis could not be completed. Check the application logs for technical details."
 
 
 st.markdown(
@@ -223,18 +210,20 @@ if analyze_clicked or sample_clicked:
     else:
         try:
             with st.spinner("Generating safe SQL, querying PostgreSQL, and analyzing the result…"):
-                st.session_state["analytics_result"] = build_analytics_pipeline().analyze(
+                st.session_state["api_analytics_result"] = build_api_client().query(
                     submitted_question
                 )
+        except FrontendAPIError as exc:
+            LOGGER.warning("Frontend API request failed: code=%s", exc.code)
+            st.error(exc.message)
+            if exc.request_id:
+                st.caption(f"Request ID: {exc.request_id}")
         except Exception:
-            LOGGER.exception("Analytics application configuration or execution failed")
-            st.error(
-                "The analytics service could not start. Verify Gemini and PostgreSQL settings "
-                "in .env, then check the application logs."
-            )
+            LOGGER.exception("Frontend configuration failed")
+            st.error("The frontend could not connect to the analytics API. Check .env and logs.")
 
-if "analytics_result" in st.session_state:
-    render_result(st.session_state["analytics_result"])
+if "api_analytics_result" in st.session_state:
+    render_result(st.session_state["api_analytics_result"])
 
 st.divider()
 st.caption(

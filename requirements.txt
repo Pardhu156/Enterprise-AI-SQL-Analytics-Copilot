@@ -9,3 +9,6 @@ sqlglot
 pytest
 streamlit
 plotly
+fastapi
+uvicorn
+httpx

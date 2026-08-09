@@ -28,7 +28,19 @@ class VisualizationEngine:
         if result.error or not result.rows or config.chart_type not in SUPPORTED_CHARTS:
             return None
 
-        frame = pd.DataFrame(result.rows, columns=result.columns)
+        return self.create_from_data(result.columns, result.rows, config)
+
+    def create_from_data(
+        self,
+        columns: tuple[str, ...] | list[str],
+        rows: tuple[tuple[Any, ...], ...] | list[list[Any]],
+        config: ChartConfig,
+    ) -> Figure | None:
+        """Render API or direct-pipeline rows from the same chart specification."""
+        if not rows or config.chart_type not in SUPPORTED_CHARTS:
+            return None
+
+        frame = pd.DataFrame(rows, columns=columns)
         frame = frame.map(_plot_value)
         required = [column for column in (config.x, config.y) if column]
         if not required or any(column not in frame.columns for column in required):
@@ -38,6 +50,9 @@ class VisualizationEngine:
             return None
 
         if config.chart_type == "line":
+            converted_x = pd.to_datetime(frame[config.x], errors="coerce")
+            if converted_x.notna().all():
+                frame[config.x] = converted_x
             frame = frame.sort_values(config.x)
             frame = _even_sample(frame, self._max_points)
             figure = px.line(frame, x=config.x, y=config.y, markers=True, title=config.title)

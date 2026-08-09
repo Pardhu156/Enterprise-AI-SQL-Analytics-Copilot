@@ -74,7 +74,7 @@ class TextToSQLPipeline:
 
     def ask(self, question: str) -> PipelineResult:
         question = question.strip()
-        LOGGER.info("Question received: %s", question)
+        LOGGER.info("Question received: length=%d", len(question))
         if not question:
             return self._failure(question, error="Question must not be empty")
 
