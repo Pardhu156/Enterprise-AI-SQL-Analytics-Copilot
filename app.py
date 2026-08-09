@@ -17,13 +17,13 @@ from src.frontend.api_client import AnalyticsAPIClient, FrontendAPIError
 
 LOGGER = logging.getLogger(__name__)
 SAMPLE_QUESTIONS = (
-    "What is the total revenue?",
+    "What is total revenue?",
     "Show the monthly revenue trend.",
     "Which 10 product categories generated the most revenue?",
-    "Which states generated the most orders?",
     "Who are the top 10 sellers by revenue?",
+    "Which states generated the most orders?",
+    "What is the average order value?",
     "Which categories have the highest average review score?",
-    "What is the average freight cost by state?",
     "Are delayed deliveries associated with lower review scores?",
 )
 
@@ -137,6 +137,16 @@ def render_result(response: AnalyticsQueryResponse) -> None:
         "SQL repair",
         "Used" if response.sql and response.sql.was_repaired else "Not needed",
     )
+    stage_times = (
+        ("SQL generation", response.execution.sql_generation_time_ms),
+        ("SQL validation", response.execution.sql_validation_time_ms),
+        ("Gemini insight", response.execution.insight_generation_time_ms),
+    )
+    rendered_stage_times = " · ".join(
+        f"{label}: {value:.1f} ms" if value is not None else f"{label}: —"
+        for label, value in stage_times
+    )
+    st.caption(rendered_stage_times)
     st.caption(f"Request ID: {response.request_id}")
 
 

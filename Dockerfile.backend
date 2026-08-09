@@ -19,4 +19,4 @@ USER app
 
 EXPOSE 8000
 
-CMD ["uvicorn", "src.api.main:app", "--host", "0.0.0.0", "--port", "8000"]
+CMD ["sh", "-c", "python scripts/validate_environment.py backend && exec uvicorn src.api.main:app --host 0.0.0.0 --port 8000"]

@@ -1,0 +1,29 @@
+{
+  "benchmark": "Olist Text-to-SQL execution-equivalence benchmark",
+  "metadata": {
+    "evaluated_at_utc": "2026-08-09T12:13:24.275065+00:00",
+    "llm_provider": "gemini",
+    "llm_model": "gemini-3.5-flash-lite",
+    "comparison_method": "PostgreSQL result equivalence"
+  },
+  "metrics": {
+    "total_questions": 22,
+    "valid_sql_rate": 1.0,
+    "execution_success_rate": 1.0,
+    "execution_accuracy": 0.3181818181818182,
+    "repair_rate": 0.0,
+    "average_sql_generation_latency_ms": 1101.9011982696777,
+    "average_sql_validation_latency_ms": 3.5469721842673607,
+    "average_sql_execution_latency_ms": 453.9914363624782,
+    "average_repair_latency_ms": null,
+    "average_end_to_end_latency_ms": 1564.8788292746758,
+    "failure_count": 15,
+    "failure_breakdown": {
+      "aggregation_mismatch": 1,
+      "date_time_mismatch": 2,
+      "ranking_mismatch": 1,
+      "relationship_mismatch": 1,
+      "result_mismatch": 10
+    }
+  }
+}

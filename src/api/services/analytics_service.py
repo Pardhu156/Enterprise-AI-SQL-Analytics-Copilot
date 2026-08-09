@@ -50,13 +50,19 @@ class AnalyticsService:
         total_ms = (time.perf_counter() - started) * 1_000
         LOGGER.info(
             "analytics_complete request_id=%s sql_generated=%s validation=%s "
-            "repair=%s rows=%d insight=%s total_ms=%.2f",
+            "repair=%s rows=%d insight=%s generation_ms=%s validation_ms=%s "
+            "sql_execution_ms=%s repair_ms=%s insight_ms=%s total_ms=%.2f",
             request_id,
             query.generated_sql is not None,
             query.validation_passed,
             query.was_repaired,
             query.row_count,
             result.insight is not None,
+            _log_time(query.generation_time_ms),
+            _log_time(query.validation_time_ms),
+            _log_time(query.execution_time_ms),
+            _log_time(query.repair_time_ms),
+            _log_time(result.insight_time_ms),
             total_ms,
         )
         return AnalyticsQueryResponse(
@@ -100,7 +106,12 @@ class AnalyticsService:
                 else None
             ),
             execution=ExecutionDetails(
+                sql_generation_time_ms=query.generation_time_ms,
+                sql_validation_time_ms=query.validation_time_ms,
                 sql_execution_time_ms=query.execution_time_ms,
+                sql_repair_time_ms=query.repair_time_ms,
+                insight_generation_time_ms=result.insight_time_ms,
+                text_to_sql_total_time_ms=query.total_time_ms,
                 total_request_time_ms=total_ms,
             ),
         )
@@ -149,3 +160,7 @@ def _json_value(value: Any) -> Any:
     if isinstance(value, (datetime, date)):
         return value.isoformat()
     return value
+
+
+def _log_time(value: float | None) -> str:
+    return f"{value:.2f}" if value is not None else "none"

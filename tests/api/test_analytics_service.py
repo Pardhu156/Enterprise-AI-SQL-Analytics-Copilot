@@ -67,6 +67,7 @@ def test_service_reuses_analytics_pipeline_and_serializes_json_values() -> None:
     assert pipeline.calls == [("What is total revenue?", False)]
     assert response.result.rows == [[100.25]]
     assert response.answer == "Total revenue is 100.25."
+    assert response.execution.sql_execution_time_ms == 1.5
 
 
 def test_service_honors_optional_response_sections() -> None:

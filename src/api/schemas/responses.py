@@ -38,7 +38,12 @@ class VisualizationDetails(BaseModel):
 
 
 class ExecutionDetails(BaseModel):
+    sql_generation_time_ms: float | None = None
+    sql_validation_time_ms: float | None = None
     sql_execution_time_ms: float | None
+    sql_repair_time_ms: float | None = None
+    insight_generation_time_ms: float | None = None
+    text_to_sql_total_time_ms: float | None = None
     total_request_time_ms: float
 
 

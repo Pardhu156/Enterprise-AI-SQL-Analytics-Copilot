@@ -1,0 +1,8 @@
+{
+  "benchmark_questions": 22,
+  "sql_validation_pass_rate": 1.0,
+  "execution_success_rate": 1.0,
+  "execution_accuracy": 0.3181818181818182,
+  "repair_rate": 0.0,
+  "avg_end_to_end_latency_seconds": 1.5648788292746758
+}

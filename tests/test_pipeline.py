@@ -76,6 +76,9 @@ def test_pipeline_success_without_repair() -> None:
     assert result.rows == (("abc",),)
     assert not result.was_repaired
     assert repairer.calls == 0
+    assert result.generation_time_ms is not None
+    assert result.validation_time_ms is not None
+    assert result.total_time_ms is not None
 
 
 def test_pipeline_repairs_database_error_once() -> None:
@@ -89,6 +92,7 @@ def test_pipeline_repairs_database_error_once() -> None:
     assert result.was_repaired
     assert repairer.calls == 1
     assert executor.calls == 2
+    assert result.repair_time_ms is not None
 
 
 def test_pipeline_does_not_retry_after_repaired_query_fails() -> None:

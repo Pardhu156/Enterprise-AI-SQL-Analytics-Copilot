@@ -1,8 +1,46 @@
 # Enterprise AI SQL Analytics Copilot
 
-**Current milestone:** Phase 5 — Containerization with Docker Compose
+**Current milestone:** Phase 6 — Release readiness, CI/CD, and measured evaluation
 
-This repository builds an enterprise-style analytics copilot on the Olist Brazilian E-Commerce dataset. Phase 1 provides the reproducible PostgreSQL data foundation. Phase 2 adds a schema-aware Gemini pipeline that generates PostgreSQL, validates it as read-only, executes it with database-level safety controls, and evaluates it against manually verified business questions. Phase 3 adds deterministic result analysis, Plotly visualizations, grounded Gemini business explanations, and a Streamlit interface. Phase 4 introduces a versioned FastAPI backend, application service layer, explicit API contracts, and an HTTP boundary between Streamlit and the analytics engine. Phase 5 packages PostgreSQL, FastAPI, and Streamlit as a reproducible Docker Compose application while retaining every local Python workflow. RAG, forecasting, cloud deployment, authentication, monitoring stacks, and CI/CD remain out of scope.
+## Overview
+
+Business users often know the question they need answered but not the database schema or SQL required to answer it. This project converts a natural-language business question into schema-aware PostgreSQL using Google Gemini, validates the generated statement against the live database schema, and executes it inside a bounded read-only transaction.
+
+Verified query results then flow through deterministic result analysis and chart selection. Gemini produces a grounded business explanation from only the returned data, while Plotly renders the selected visualization. Streamlit provides the user interface and communicates exclusively with a versioned FastAPI backend.
+
+The complete system is reproducible with Docker Compose, measured against 22 manually verified Olist benchmark questions, and protected by GitHub Actions quality gates. It is a portfolio engineering project and is not affiliated with Olist.
+
+## Key features
+
+- Gemini-powered, schema-aware Text-to-SQL generation
+- AST-based SQL safety validation and one controlled repair attempt
+- PostgreSQL read-only transactions, statement timeout, and row limits
+- Execution-equivalence benchmark with failure categorization and stage latency metrics
+- Grounded Gemini business summaries using bounded result context
+- Deterministic result analysis and automatic Plotly visualization
+- Streamlit frontend and explicit FastAPI request/response contracts
+- Docker Compose orchestration with health checks and persistent PostgreSQL storage
+- GitHub Actions lint, tests, coverage, configuration validation, and Docker builds
+- Automatic quality-gated Docker Hub publishing on `main`, with optional version tags
+
+## Architecture
+
+```mermaid
+flowchart TD
+    U["User"] --> S["Streamlit frontend"]
+    S -->|"HTTP"| API["FastAPI"]
+    API --> AS["Analytics service"]
+    AS --> T["Gemini Text-to-SQL"]
+    T --> V["SQL safety validator"]
+    V --> DB["PostgreSQL read-only execution"]
+    DB --> R["Verified query result"]
+    R --> RA["Result analyzer and chart selector"]
+    R --> GI["Gemini grounded insight"]
+    RA --> P["Plotly visualization config"]
+    GI --> O["Structured API response"]
+    P --> O
+    O --> S
+```
 
 ## Dataset
 
@@ -55,12 +93,22 @@ The processing step standardizes column labels, removes only exact duplicate row
 │   └── benchmark_queries.sql        # 22 ground-truth analytical queries
 ├── evaluation/
 │   ├── benchmark_questions.json     # structured Phase 1 benchmark suite
-│   └── evaluate_text_to_sql.py      # execution-based evaluator
+│   ├── benchmark_summary.json       # committed real measured summary
+│   ├── resume_metrics.json          # compact measured release metrics
+│   └── evaluate_text_to_sql.py      # execution-equivalence evaluator
+├── .github/workflows/
+│   ├── ci.yml                        # lint, tests, coverage, config, image builds
+│   └── release.yml                   # quality-gated Docker Hub publishing
+├── docs/
+│   ├── cicd-dockerhub.md             # registry secret and release setup
+│   └── deployment-aws-ecs.md        # prepared ECS/RDS deployment guide
 ├── notebooks/
 │   └── data_exploration.ipynb       # data quality exploration
 ├── scripts/
 │   ├── ask.py                       # interactive/one-shot Text-to-SQL CLI
 │   ├── docker_init_db.py            # idempotent Compose database initializer
+│   ├── benchmark_api.py             # small live API latency benchmark
+│   ├── validate_environment.py      # secret-safe startup validation
 │   └── test_api_integration.py      # optional live API smoke test
 ├── app.py                            # Streamlit analytics interface
 ├── src/
@@ -102,6 +150,7 @@ The processing step standardizes column labels, removes only exact duplicate row
 ├── .env.example
 ├── .gitignore
 ├── requirements.txt
+├── pyproject.toml                    # Ruff and pytest configuration
 └── README.md
 ```
 
@@ -298,7 +347,7 @@ Disable automatic repair for diagnostics with `--no-repair`.
 Run the complete benchmark:
 
 ```bash
-python evaluation/evaluate_text_to_sql.py
+python evaluation/evaluate_text_to_sql.py --request-delay-seconds 4.2
 ```
 
 Run a low-cost smoke evaluation first:
@@ -307,17 +356,36 @@ Run a low-cost smoke evaluation first:
 python evaluation/evaluate_text_to_sql.py --limit 3
 ```
 
-Results are written to `evaluation/results/latest.json`, which is ignored by Git. Reported metrics include valid SQL rate, execution success rate, execution accuracy, repair rate, and average successful-query latency. No metric exists until the corresponding evaluation is actually executed.
+Detailed JSON and CSV results are written under the ignored `evaluation/results/` directory. The committed `evaluation/benchmark_summary.json` and `evaluation/resume_metrics.json` contain only measurements from the final full run. `--request-delay-seconds` is evaluator-only pacing for free-tier quotas; the application does not add hidden retries.
+
+### Measured Text-to-SQL benchmark
+
+The final full run executed on 2026-08-09 using `gemini-3.5-flash-lite`, the real Olist PostgreSQL data, all 22 verified questions, and PostgreSQL result equivalence rather than SQL string matching.
+
+| Metric | Measured result |
+|---|---:|
+| Benchmark questions | 22 |
+| SQL validation pass rate | 100.00% |
+| Execution success rate | 100.00% |
+| Execution accuracy | 31.82% |
+| Repair rate | 0.00% |
+| Average SQL generation latency | 1,101.90 ms |
+| Average SQL validation latency | 3.55 ms |
+| Average PostgreSQL execution latency | 453.99 ms |
+| Average end-to-end Text-to-SQL latency | 1,564.88 ms |
+
+Accuracy is intentionally strict: every required reference column, row, value, and reference ordering must match, although additional supporting generated columns are allowed. Fifteen questions had semantic result mismatches: 10 general result mismatches, 2 date/time mismatches, 1 aggregation mismatch, 1 ranking mismatch, and 1 relationship mismatch. There were no validation, execution, repair, or quota failures in the paced final run. These results demonstrate strong safety/executability but also show that semantic accuracy remains the principal model-quality limitation.
 
 ### Run tests
 
-Unit tests use fake generators, executors, and repairers, so they do not make paid LLM calls:
+Unit tests use fake generators, executors, repairers, and API services, so they do not make Gemini calls:
 
 ```bash
-python -m pytest -q
+ruff check .
+python -m pytest -q --cov=src --cov-report=term-missing --cov-fail-under=70
 ```
 
-They cover the Phase 2 safety and orchestration behavior plus Phase 3 result classification, chart selection, Plotly rendering, prompt grounding, context limits, and initial Streamlit rendering. Gemini is mocked in unit tests, so the test suite consumes no API quota.
+The final local run passed 84 tests with 77.62% measured source coverage. Tests cover SQL extraction and safety, read-only execution controls, bounded results, repair limits, analysis and chart selection, insight grounding, API contracts and errors, frontend transport behavior, Docker initialization decisions, configuration validation, and initial Streamlit rendering. Gemini is mocked in unit tests, so the suite consumes no quota.
 
 ## Phase 3 — AI Business Insights & Interactive Visualization
 
@@ -526,3 +594,79 @@ streamlit run app.py
 ```
 
 The root `requirements.txt` installs the complete development/test environment. The two files under `requirements/` keep the backend and frontend images smaller without introducing a second application architecture.
+
+## Phase 6 — CI/CD, measurement, and release readiness
+
+Phase 6 adds release engineering around the existing application. It does not add a second LLM provider, cloud-only runtime behavior, or production credentials.
+
+### CI quality gates
+
+`.github/workflows/ci.yml` runs directly for feature-branch pushes and pull requests, and is reused as the required gate for `main` and version-tag publications. It:
+
+1. installs Python 3.13 dependencies using the pip cache;
+2. runs Ruff as the single lint tool;
+3. runs all mocked unit/API tests with a 70% source-coverage floor;
+4. verifies the FastAPI application import;
+5. validates test runtime configuration without connecting to Gemini;
+6. validates `docker compose config` with non-production placeholder values; and
+7. builds the backend and frontend images independently with Buildx cache.
+
+Normal CI never calls Gemini and does not require a running PostgreSQL service. A workflow file existing in the repository does not prove GitHub-hosted CI has passed; check the repository's Actions tab after pushing.
+
+### Automated Docker publishing
+
+`.github/workflows/release.yml` is triggered by every push to `main` and by semantic-style tags such as `v1.0.0`. It calls the complete CI workflow as a required release gate and publishes only after linting, tests, coverage, configuration checks, and both Docker builds pass. Configure these GitHub Actions repository secrets first:
+
+- `DOCKERHUB_USERNAME`
+- `DOCKERHUB_TOKEN` — use a Docker Hub access token, not an account password
+
+On `main`, the workflow automatically publishes separate backend and frontend images with `main` and `latest` tags; no Git tag or manual Docker command is required. An optional version tag publishes full version and major/minor tags as well. Local `.env` values are not uploaded to Actions; CI uses mock application configuration, while the two encrypted GitHub secrets are scoped to Docker Hub login. See `docs/cicd-dockerhub.md` for the complete one-time setup and release verification flow. No image has been published by this repository implementation.
+
+### Runtime validation and observability
+
+Validate configuration without revealing values:
+
+```bash
+python scripts/validate_environment.py all
+```
+
+The backend container runs this validation before starting Uvicorn. API responses and structured logs expose SQL generation, validation, execution, optional repair, insight-generation, Text-to-SQL total, and request-total timings. Logs include request IDs, endpoint, status, validation/repair state, row count, and duration; they do not intentionally log credentials.
+
+Run a small live API performance sample only when PostgreSQL, FastAPI, and Gemini are available:
+
+```bash
+python scripts/benchmark_api.py --limit 3 --request-delay-seconds 6
+```
+
+The script reports success rate plus average, p50, and p95 wall latency. Its default five-question set makes real Gemini calls, so use `--limit` deliberately on quota-constrained accounts. No API performance numbers are committed because they depend on the live deployment and were not used as the Text-to-SQL accuracy benchmark.
+
+### Deployment status
+
+The containers and environment contracts are compatible with a production-style ECS Fargate and RDS architecture described in `docs/deployment-aws-ecs.md`. AWS resources were **not** provisioned, no live cloud deployment was executed, and the Compose PostgreSQL container is not presented as a production database.
+
+Future AWS advancement would replace Docker Hub with Amazon ECR, run the two application images as separate ECS Fargate services, and replace the Compose database with encrypted RDS PostgreSQL. An Application Load Balancer and ACM certificate would provide HTTPS, AWS Cloud Map would provide private frontend-to-backend discovery, and Secrets Manager would supply Gemini and database credentials through task roles. CloudWatch logs/alarms, autoscaling, backups, WAF rules, and infrastructure as code can then be introduced incrementally after the portfolio deployment is stable.
+
+### Release checklist
+
+Before creating `v1.0.0`:
+
+```bash
+ruff check .
+python -m pytest -q --cov=src --cov-report=term-missing --cov-fail-under=70
+python scripts/validate_environment.py all
+docker compose config --quiet
+docker compose up --build -d
+docker compose ps
+curl http://localhost:8000/health
+curl http://localhost:8000/health/ready
+curl http://localhost:8501/_stcore/health
+```
+
+Then verify one real question in Streamlit and push the release commit. The successful `main` workflow automatically publishes `main` and `latest` images. A semantic version tag is optional when you want immutable release tags:
+
+```bash
+git tag -a v1.0.0 -m "Enterprise AI SQL Analytics Copilot v1.0.0"
+git push origin v1.0.0
+```
+
+Do not create the tag merely because the workflow is configured; create it after the pushed CI run and desired Docker smoke test succeed.

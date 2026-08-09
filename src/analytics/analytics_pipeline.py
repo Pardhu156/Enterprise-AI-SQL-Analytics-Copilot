@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+import time
 from dataclasses import dataclass
 
 from plotly.graph_objects import Figure
@@ -27,6 +28,7 @@ class AnalyticsResult:
     figure: Figure | None
     insight: str | None
     insight_error: str | None = None
+    insight_time_ms: float | None = None
 
 
 class AnalyticsPipeline:
@@ -54,6 +56,7 @@ class AnalyticsPipeline:
         figure = self._visualization.create(query, chart) if create_figure else None
         insight: str | None = None
         insight_error: str | None = None
+        insight_started = time.perf_counter()
         try:
             insight = self._insight_generator.generate(
                 question=question,
@@ -65,6 +68,7 @@ class AnalyticsPipeline:
         except Exception as exc:
             LOGGER.exception("Business insight generation failed")
             insight_error = str(exc)
+        insight_time_ms = (time.perf_counter() - insight_started) * 1_000
         return AnalyticsResult(
             question=question,
             query=query,
@@ -73,4 +77,5 @@ class AnalyticsPipeline:
             figure=figure,
             insight=insight,
             insight_error=insight_error,
+            insight_time_ms=insight_time_ms,
         )

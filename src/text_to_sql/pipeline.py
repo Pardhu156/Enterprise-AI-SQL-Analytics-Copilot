@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+import time
 from dataclasses import asdict, dataclass
 from typing import Any
 
@@ -31,6 +32,10 @@ class PipelineResult:
     execution_time_ms: float | None
     truncated: bool
     error: str | None
+    generation_time_ms: float | None = None
+    validation_time_ms: float | None = None
+    repair_time_ms: float | None = None
+    total_time_ms: float | None = None
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)
@@ -73,23 +78,44 @@ class TextToSQLPipeline:
         )
 
     def ask(self, question: str) -> PipelineResult:
+        started = time.perf_counter()
+        timings = _StageTimings()
         question = question.strip()
         LOGGER.info("Question received: length=%d", len(question))
+
+        def failure(**kwargs: Any) -> PipelineResult:
+            return self._failure(
+                question,
+                timings=timings,
+                total_time_ms=_elapsed_ms(started),
+                **kwargs,
+            )
+
         if not question:
-            return self._failure(question, error="Question must not be empty")
+            return failure(error="Question must not be empty")
 
         try:
             schema = self._schema_manager.get_snapshot()
+            generation_started = time.perf_counter()
             generated_sql = self._generator.generate(question)
         except Exception as exc:
+            if "generation_started" in locals():
+                timings.generation_time_ms = _elapsed_ms(generation_started)
             LOGGER.error("SQL generation failed: %s", exc)
-            return self._failure(question, error=f"SQL generation failed: {exc}")
+            return failure(error=f"SQL generation failed: {exc}")
+        timings.generation_time_ms = _elapsed_ms(generation_started)
 
+        validation_started = time.perf_counter()
         validation = self._validator.validate(generated_sql, schema)
-        LOGGER.info("SQL validation: %s (%s)", "PASSED" if validation.valid else "FAILED", validation.reason)
+        timings.validation_time_ms = _elapsed_ms(validation_started)
+        LOGGER.info(
+            "SQL validation: %s (%s) duration_ms=%.2f",
+            "PASSED" if validation.valid else "FAILED",
+            validation.reason,
+            timings.validation_time_ms,
+        )
         if not validation.valid:
-            return self._failure(
-                question,
+            return failure(
                 generated_sql=generated_sql,
                 final_sql=generated_sql,
                 validation_passed=False,
@@ -100,12 +126,20 @@ class TextToSQLPipeline:
         try:
             result = self._executor.execute(generated_sql, validation)
             LOGGER.info("Query executed in %.2f ms", result.execution_time_ms)
-            return self._success(question, generated_sql, generated_sql, False, validation.reason, result)
+            return self._success(
+                question,
+                generated_sql,
+                generated_sql,
+                False,
+                validation.reason,
+                result,
+                timings,
+                _elapsed_ms(started),
+            )
         except SQLExecutionError as first_error:
             LOGGER.warning("Generated SQL execution failed: %s", first_error)
             if self._max_repair_attempts == 0:
-                return self._failure(
-                    question,
+                return failure(
                     generated_sql=generated_sql,
                     final_sql=generated_sql,
                     validation_passed=True,
@@ -114,6 +148,7 @@ class TextToSQLPipeline:
                 )
 
             try:
+                repair_started = time.perf_counter()
                 repaired_sql = self._repairer.repair(
                     question=question,
                     original_sql=generated_sql,
@@ -121,9 +156,9 @@ class TextToSQLPipeline:
                     schema_context=schema.to_prompt(),
                 )
             except Exception as repair_error:
+                timings.repair_time_ms = _elapsed_ms(repair_started)
                 LOGGER.error("SQL repair generation failed: %s", repair_error)
-                return self._failure(
-                    question,
+                return failure(
                     generated_sql=generated_sql,
                     final_sql=generated_sql,
                     validation_passed=True,
@@ -131,16 +166,22 @@ class TextToSQLPipeline:
                     was_repaired=True,
                     error=f"SQL repair failed: {repair_error}",
                 )
+            timings.repair_time_ms = _elapsed_ms(repair_started)
 
+            repaired_validation_started = time.perf_counter()
             repaired_validation = self._validator.validate(repaired_sql, schema)
+            repaired_validation_ms = _elapsed_ms(repaired_validation_started)
+            timings.validation_time_ms = (
+                (timings.validation_time_ms or 0.0) + repaired_validation_ms
+            )
             LOGGER.info(
-                "Repaired SQL validation: %s (%s)",
+                "Repaired SQL validation: %s (%s) duration_ms=%.2f",
                 "PASSED" if repaired_validation.valid else "FAILED",
                 repaired_validation.reason,
+                repaired_validation_ms,
             )
             if not repaired_validation.valid:
-                return self._failure(
-                    question,
+                return failure(
                     generated_sql=generated_sql,
                     final_sql=repaired_sql,
                     validation_passed=False,
@@ -159,11 +200,12 @@ class TextToSQLPipeline:
                     True,
                     repaired_validation.reason,
                     result,
+                    timings,
+                    _elapsed_ms(started),
                 )
             except SQLExecutionError as second_error:
                 LOGGER.error("Repaired SQL execution failed: %s", second_error)
-                return self._failure(
-                    question,
+                return failure(
                     generated_sql=generated_sql,
                     final_sql=repaired_sql,
                     validation_passed=True,
@@ -180,7 +222,10 @@ class TextToSQLPipeline:
         was_repaired: bool,
         validation_reason: str,
         result: QueryResult,
+        timings: "_StageTimings | None" = None,
+        total_time_ms: float | None = None,
     ) -> PipelineResult:
+        timings = timings or _StageTimings()
         return PipelineResult(
             question=question,
             generated_sql=generated_sql,
@@ -194,6 +239,10 @@ class TextToSQLPipeline:
             execution_time_ms=result.execution_time_ms,
             truncated=result.truncated,
             error=None,
+            generation_time_ms=timings.generation_time_ms,
+            validation_time_ms=timings.validation_time_ms,
+            repair_time_ms=timings.repair_time_ms,
+            total_time_ms=total_time_ms,
         )
 
     @staticmethod
@@ -205,7 +254,10 @@ class TextToSQLPipeline:
         validation_reason: str | None = None,
         was_repaired: bool = False,
         error: str | None = None,
+        timings: "_StageTimings | None" = None,
+        total_time_ms: float | None = None,
     ) -> PipelineResult:
+        timings = timings or _StageTimings()
         return PipelineResult(
             question=question,
             generated_sql=generated_sql,
@@ -219,4 +271,19 @@ class TextToSQLPipeline:
             execution_time_ms=None,
             truncated=False,
             error=error,
+            generation_time_ms=timings.generation_time_ms,
+            validation_time_ms=timings.validation_time_ms,
+            repair_time_ms=timings.repair_time_ms,
+            total_time_ms=total_time_ms,
         )
+
+
+@dataclass
+class _StageTimings:
+    generation_time_ms: float | None = None
+    validation_time_ms: float | None = None
+    repair_time_ms: float | None = None
+
+
+def _elapsed_ms(started: float) -> float:
+    return (time.perf_counter() - started) * 1_000
