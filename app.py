@@ -218,6 +218,8 @@ if analyze_clicked or sample_clicked:
     if not submitted_question:
         st.warning("Enter a business question before running the analysis.")
     else:
+        # Never leave a previous answer visible when a new analysis fails.
+        st.session_state.pop("api_analytics_result", None)
         try:
             with st.spinner("Generating safe SQL, querying PostgreSQL, and analyzing the result…"):
                 st.session_state["api_analytics_result"] = build_api_client().query(

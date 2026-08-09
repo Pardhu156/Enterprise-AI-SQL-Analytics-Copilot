@@ -1,7 +1,6 @@
 -r requirements/backend.txt
 -r requirements/frontend.txt
 
-sqlalchemy>=2.0,<3
 jupyter>=1.0,<2
 pytest>=9.0,<10
 pytest-cov>=7.0,<8

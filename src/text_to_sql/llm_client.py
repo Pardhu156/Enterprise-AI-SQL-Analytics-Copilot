@@ -1,4 +1,4 @@
-"""Provider-neutral LLM interface with a Google Gemini implementation."""
+"""Testable LLM protocol and the project's Google Gemini implementation."""
 
 from __future__ import annotations
 
@@ -65,6 +65,4 @@ def create_llm_client(config: LLMConfig | None = None) -> LLMClient:
     resolved = config or LLMConfig.from_env()
     if resolved.provider == "gemini":
         return GeminiClient(model=resolved.model, api_key=resolved.api_key)
-    raise ValueError(
-        f"Unsupported LLM_PROVIDER {resolved.provider!r}. Phase 2 supports 'gemini'."
-    )
+    raise ValueError(f"Unsupported LLM_PROVIDER {resolved.provider!r}. This project uses 'gemini'.")

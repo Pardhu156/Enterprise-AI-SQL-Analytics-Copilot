@@ -68,8 +68,10 @@ A normal `main` push publishes these rolling tags:
 Verify the published images in Docker Hub or pull them explicitly:
 
 ```bash
-docker pull <dockerhub-username>/enterprise-ai-sql-copilot-backend:1.0.0
-docker pull <dockerhub-username>/enterprise-ai-sql-copilot-frontend:1.0.0
+docker pull <dockerhub-username>/enterprise-ai-sql-copilot-backend:latest
+docker pull <dockerhub-username>/enterprise-ai-sql-copilot-frontend:latest
 ```
+
+Use `:1.0.0` instead after publishing the optional `v1.0.0` Git tag.
 
 If publishing fails, check the release workflow logs without pasting token values into issues or logs. The most common causes are a missing repository, a username mismatch, or a token without write permission.

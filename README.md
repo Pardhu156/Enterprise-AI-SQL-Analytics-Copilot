@@ -1,6 +1,6 @@
 # Enterprise AI SQL Analytics Copilot
 
-**Current milestone:** Phase 6 — Release readiness, CI/CD, and measured evaluation
+**Status:** Complete — portfolio-ready implementation with measured evaluation and automated Docker Hub delivery
 
 ## Overview
 
@@ -9,6 +9,21 @@ Business users often know the question they need answered but not the database s
 Verified query results then flow through deterministic result analysis and chart selection. Gemini produces a grounded business explanation from only the returned data, while Plotly renders the selected visualization. Streamlit provides the user interface and communicates exclusively with a versioned FastAPI backend.
 
 The complete system is reproducible with Docker Compose, measured against 22 manually verified Olist benchmark questions, and protected by GitHub Actions quality gates. It is a portfolio engineering project and is not affiliated with Olist.
+
+## Business problem
+
+Business teams often depend on analysts to translate routine questions into SQL, validate joins and aggregations, and interpret the result. That workflow delays stakeholders and consumes analyst time that could be spent on deeper investigation. This application reduces that friction by providing natural-language analytics over structured relational data while retaining SQL visibility and safety controls.
+
+## Core flow
+
+```mermaid
+flowchart LR
+    Q["Natural-language question"] --> G["Google Gemini Text-to-SQL"]
+    G --> V["SQL safety validation"]
+    V --> P["PostgreSQL"]
+    P --> I["Business insight"]
+    P --> C["Plotly visualization"]
+```
 
 ## Key features
 
@@ -44,7 +59,7 @@ flowchart TD
 
 ## Dataset
 
-The [Olist Brazilian E-Commerce dataset](https://www.kaggle.com/datasets/olistbr/brazilian-ecommerce) describes customers, orders, products, sellers, payments, reviews, order items, and Brazilian ZIP-prefix geolocation. Download it manually and place the source CSV files in `data/raw/`; this project never downloads data automatically.
+The [Olist Brazilian E-Commerce Public Dataset](https://www.kaggle.com/datasets/olistbr/brazilian-ecommerce) describes customers, orders, products, sellers, payments, reviews, order items, and Brazilian ZIP-prefix geolocation. Download it manually and place the source CSV files in `data/raw/`; this project never downloads data automatically.
 
 Expected files:
 
@@ -100,8 +115,8 @@ The processing step standardizes column labels, removes only exact duplicate row
 │   ├── ci.yml                        # lint, tests, coverage, config, image builds
 │   └── release.yml                   # quality-gated Docker Hub publishing
 ├── docs/
-│   ├── cicd-dockerhub.md             # registry secret and release setup
-│   └── deployment-aws-ecs.md        # prepared ECS/RDS deployment guide
+│   ├── cicd-dockerhub.md            # registry secret and release setup
+│   └── deployment-aws-ecs.md        # short future AWS enhancement note
 ├── notebooks/
 │   └── data_exploration.ipynb       # data quality exploration
 ├── scripts/
@@ -133,13 +148,13 @@ The processing step standardizes column labels, removes only exact duplicate row
 │   └── text_to_sql/
 │       ├── schema_manager.py        # live PostgreSQL introspection
 │       ├── prompt_builder.py        # generation and repair prompts
-│       ├── llm_client.py            # provider-neutral LLM interface
+│       ├── llm_client.py            # Gemini client behind a testable protocol
 │       ├── sql_generator.py         # generation and SQL extraction
 │       ├── sql_validator.py         # AST safety/schema validation
 │       ├── sql_executor.py          # bounded read-only execution
 │       ├── sql_repair.py            # one controlled repair attempt
 │       └── pipeline.py              # end-to-end orchestration
-├── tests/                            # API-free unit tests
+├── tests/                            # mocked unit, API, and boundary tests
 ├── requirements/
 │   ├── backend.txt                   # backend/container runtime dependencies
 │   └── frontend.txt                  # frontend/container runtime dependencies
@@ -282,7 +297,7 @@ psql -d olist_analytics -f database/benchmark_queries.sql
 
 The 22 queries provide ground truth for Phase 2 and include total and monthly revenue, category and seller rankings, state demand and order value, reviews, late-delivery rates, delivery-rating relationships, payment behavior, freight costs, delivery time, monthly volume, products, repeat customers, cancellations, and geographic delivery performance. Each query uses explicit columns and aliases and includes its natural-language question as a SQL comment.
 
-## Phase 2 — LLM-Powered Text-to-SQL Engine
+## Phase 2 — Gemini-powered Text-to-SQL engine
 
 Phase 2 accepts a business question and returns the generated SQL, final executed SQL, validation status, rows, columns, execution time, truncation status, repair status, and any error. Phase 3 consumes that structured result without duplicating the Text-to-SQL pipeline.
 
@@ -290,7 +305,7 @@ Phase 2 accepts a business question and returns the generated SQL, final execute
 flowchart TD
     Q["User Question"] --> S["Schema Manager"]
     S --> P["Prompt Builder"]
-    P --> L["LLM"]
+    P --> L["Google Gemini"]
     L --> G["SQL Generator"]
     G --> V["Safety Validator"]
     V -->|"validated"| DB["PostgreSQL (read-only transaction)"]
@@ -308,7 +323,7 @@ flowchart TD
 
 `SchemaManager` queries PostgreSQL metadata at runtime for public tables, views, columns, data types, primary keys, foreign keys, and relation comments. It serializes only this compact metadata for the LLM, so generated SQL targets the actual Phase 1 database rather than a duplicated hardcoded schema.
 
-The provider-neutral client currently implements Google Gemini using the official `google-genai` Python SDK. `LLM_PROVIDER`, `LLM_MODEL`, and `LLM_API_KEY` select it without hardcoding secrets or coupling the rest of the pipeline to the SDK. The example configuration uses `gemini-3.5-flash-lite`; quotas and model availability remain controlled by Google. Google states that free-tier content may be used to improve its products, so do not submit sensitive enterprise questions or schema details through the free tier.
+The testable client protocol has one implementation: Google Gemini through the official `google-genai` Python SDK. `LLM_PROVIDER`, `LLM_MODEL`, and `LLM_API_KEY` configure it without hardcoding secrets. The example configuration uses `gemini-3.5-flash-lite`; quotas and model availability remain controlled by Google. Do not submit sensitive enterprise questions or schema details through consumer/free-tier services.
 
 ### Safety model
 
@@ -615,12 +630,20 @@ Normal CI never calls Gemini and does not require a running PostgreSQL service. 
 
 ### Automated Docker publishing
 
+```mermaid
+flowchart LR
+    P["Push or merge to main"] --> A["GitHub Actions"]
+    A --> T["Ruff + pytest + coverage"]
+    T --> B["Build backend and frontend images"]
+    B --> H["Publish main and latest to Docker Hub"]
+```
+
 `.github/workflows/release.yml` is triggered by every push to `main` and by semantic-style tags such as `v1.0.0`. It calls the complete CI workflow as a required release gate and publishes only after linting, tests, coverage, configuration checks, and both Docker builds pass. Configure these GitHub Actions repository secrets first:
 
 - `DOCKERHUB_USERNAME`
 - `DOCKERHUB_TOKEN` — use a Docker Hub access token, not an account password
 
-On `main`, the workflow automatically publishes separate backend and frontend images with `main` and `latest` tags; no Git tag or manual Docker command is required. An optional version tag publishes full version and major/minor tags as well. Local `.env` values are not uploaded to Actions; CI uses mock application configuration, while the two encrypted GitHub secrets are scoped to Docker Hub login. See `docs/cicd-dockerhub.md` for the complete one-time setup and release verification flow. No image has been published by this repository implementation.
+On `main`, the workflow automatically publishes separate backend and frontend images with `main` and `latest` tags; no Git tag or manual Docker command is required. An optional version tag publishes full version and major/minor tags as well. Local `.env` values are not uploaded to Actions; CI uses mock application configuration, while the two encrypted GitHub secrets are scoped to Docker Hub login. The workflow has successfully delivered both public images: [backend](https://hub.docker.com/r/pardhu156/enterprise-ai-sql-copilot-backend) and [frontend](https://hub.docker.com/r/pardhu156/enterprise-ai-sql-copilot-frontend). See `docs/cicd-dockerhub.md` for setup and release verification.
 
 ### Runtime validation and observability
 
@@ -639,12 +662,6 @@ python scripts/benchmark_api.py --limit 3 --request-delay-seconds 6
 ```
 
 The script reports success rate plus average, p50, and p95 wall latency. Its default five-question set makes real Gemini calls, so use `--limit` deliberately on quota-constrained accounts. No API performance numbers are committed because they depend on the live deployment and were not used as the Text-to-SQL accuracy benchmark.
-
-### Deployment status
-
-The containers and environment contracts are compatible with a production-style ECS Fargate and RDS architecture described in `docs/deployment-aws-ecs.md`. AWS resources were **not** provisioned, no live cloud deployment was executed, and the Compose PostgreSQL container is not presented as a production database.
-
-Future AWS advancement would replace Docker Hub with Amazon ECR, run the two application images as separate ECS Fargate services, and replace the Compose database with encrypted RDS PostgreSQL. An Application Load Balancer and ACM certificate would provide HTTPS, AWS Cloud Map would provide private frontend-to-backend discovery, and Secrets Manager would supply Gemini and database credentials through task roles. CloudWatch logs/alarms, autoscaling, backups, WAF rules, and infrastructure as code can then be introduced incrementally after the portfolio deployment is stable.
 
 ### Release checklist
 
@@ -670,3 +687,8 @@ git push origin v1.0.0
 ```
 
 Do not create the tag merely because the workflow is configured; create it after the pushed CI run and desired Docker smoke test succeed.
+
+## Future Enhancements
+
+- Deploy the containerized frontend and backend through Amazon ECR and ECS Fargate (or App Runner), migrate PostgreSQL to Amazon RDS, store credentials in AWS Secrets Manager, and use CloudWatch for logs and alarms. AWS deployment is not part of the completed implementation.
+- Improve strict Text-to-SQL execution accuracy through prompt iteration and benchmark-driven failure analysis without weakening SQL safety.
