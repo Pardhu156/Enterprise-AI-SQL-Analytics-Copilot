@@ -1,14 +1,6 @@
-pandas
-numpy
-sqlalchemy
-psycopg2-binary
-python-dotenv
-jupyter
-google-genai
-sqlglot
-pytest
-streamlit
-plotly
-fastapi
-uvicorn
-httpx
+-r requirements/backend.txt
+-r requirements/frontend.txt
+
+sqlalchemy>=2.0,<3
+jupyter>=1.0,<2
+pytest>=9.0,<10

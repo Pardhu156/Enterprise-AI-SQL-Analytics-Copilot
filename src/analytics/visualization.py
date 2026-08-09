@@ -3,13 +3,11 @@
 from __future__ import annotations
 
 from decimal import Decimal
-from typing import Any
+from typing import Any, Protocol
 
 import pandas as pd
 import plotly.express as px
 from plotly.graph_objects import Figure
-
-from src.text_to_sql.pipeline import PipelineResult
 
 from .chart_selector import ChartConfig
 from .result_analyzer import humanize_column
@@ -18,13 +16,21 @@ from .result_analyzer import humanize_column
 SUPPORTED_CHARTS = {"bar", "horizontal_bar", "line", "scatter", "histogram"}
 
 
+class QueryResultLike(Protocol):
+    """Minimum direct-pipeline result shape needed to render a figure."""
+
+    error: str | None
+    columns: tuple[str, ...]
+    rows: tuple[tuple[Any, ...], ...]
+
+
 class VisualizationEngine:
     def __init__(self, max_points: int = 100) -> None:
         if max_points <= 0:
             raise ValueError("max_points must be greater than zero")
         self._max_points = max_points
 
-    def create(self, result: PipelineResult, config: ChartConfig) -> Figure | None:
+    def create(self, result: QueryResultLike, config: ChartConfig) -> Figure | None:
         if result.error or not result.rows or config.chart_type not in SUPPORTED_CHARTS:
             return None
 

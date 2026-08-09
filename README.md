@@ -1,8 +1,8 @@
 # Enterprise AI SQL Analytics Copilot
 
-**Current milestone:** Phase 4 — FastAPI Backend & Service Architecture
+**Current milestone:** Phase 5 — Containerization with Docker Compose
 
-This repository builds an enterprise-style analytics copilot on the Olist Brazilian E-Commerce dataset. Phase 1 provides the reproducible PostgreSQL data foundation. Phase 2 adds a schema-aware Gemini pipeline that generates PostgreSQL, validates it as read-only, executes it with database-level safety controls, and evaluates it against manually verified business questions. Phase 3 adds deterministic result analysis, Plotly visualizations, grounded Gemini business explanations, and a Streamlit interface. Phase 4 introduces a versioned FastAPI backend, application service layer, explicit API contracts, and an HTTP boundary between Streamlit and the analytics engine. RAG, forecasting, deployment, authentication, monitoring stacks, and CI/CD remain out of scope.
+This repository builds an enterprise-style analytics copilot on the Olist Brazilian E-Commerce dataset. Phase 1 provides the reproducible PostgreSQL data foundation. Phase 2 adds a schema-aware Gemini pipeline that generates PostgreSQL, validates it as read-only, executes it with database-level safety controls, and evaluates it against manually verified business questions. Phase 3 adds deterministic result analysis, Plotly visualizations, grounded Gemini business explanations, and a Streamlit interface. Phase 4 introduces a versioned FastAPI backend, application service layer, explicit API contracts, and an HTTP boundary between Streamlit and the analytics engine. Phase 5 packages PostgreSQL, FastAPI, and Streamlit as a reproducible Docker Compose application while retaining every local Python workflow. RAG, forecasting, cloud deployment, authentication, monitoring stacks, and CI/CD remain out of scope.
 
 ## Dataset
 
@@ -60,6 +60,7 @@ The processing step standardizes column labels, removes only exact duplicate row
 │   └── data_exploration.ipynb       # data quality exploration
 ├── scripts/
 │   ├── ask.py                       # interactive/one-shot Text-to-SQL CLI
+│   ├── docker_init_db.py            # idempotent Compose database initializer
 │   └── test_api_integration.py      # optional live API smoke test
 ├── app.py                            # Streamlit analytics interface
 ├── src/
@@ -91,6 +92,13 @@ The processing step standardizes column labels, removes only exact duplicate row
 │       ├── sql_repair.py            # one controlled repair attempt
 │       └── pipeline.py              # end-to-end orchestration
 ├── tests/                            # API-free unit tests
+├── requirements/
+│   ├── backend.txt                   # backend/container runtime dependencies
+│   └── frontend.txt                  # frontend/container runtime dependencies
+├── Dockerfile.backend
+├── Dockerfile.frontend
+├── docker-compose.yml
+├── .dockerignore
 ├── .env.example
 ├── .gitignore
 ├── requirements.txt
@@ -411,6 +419,110 @@ python scripts/test_api_integration.py
 
 This is intentionally not part of the default unit suite because it performs real PostgreSQL and Gemini calls. Unit tests replace the analytics service and external HTTP transport, so `pytest` consumes no Gemini quota.
 
-## Next milestone
+## Phase 5 — Containerization with Docker
 
-Phase 5 is intentionally not implemented in this repository milestone.
+Phase 5 places Docker around the existing application rather than moving business logic into containers. The browser still talks to Streamlit, Streamlit uses the Phase 4 HTTP client, FastAPI uses the existing analytics service, and Gemini remains the only external LLM provider.
+
+```mermaid
+flowchart TD
+    B["Browser"] -->|"localhost:8501"| F["Streamlit container"]
+    F -->|"http://backend:8000"| A["FastAPI container"]
+    A -->|"db:5432"| D["PostgreSQL 16 container"]
+    A -->|"HTTPS"| G["Google Gemini API"]
+    I["One-shot db-init service"] --> P["Existing Phase 1 processor and loader"]
+    P --> D
+    V["Named volume: postgres_data"] --- D
+```
+
+### Prerequisites and configuration
+
+Install Docker Desktop with the Docker Compose plugin. Copy the example environment file if `.env` does not exist:
+
+```bash
+cp .env.example .env
+```
+
+Set a real `DB_PASSWORD` and `LLM_API_KEY` in `.env`. Keep `LLM_PROVIDER=gemini` and use a Gemini model available to your account. Compose passes these values only at runtime; `.env` and all CSV datasets are excluded from image build contexts and Git.
+
+After Docker is running, validate the Compose file without printing the resolved secret-bearing configuration:
+
+```bash
+docker compose config --quiet
+```
+
+The container network overrides local addresses automatically:
+
+- backend database address: `db:5432`
+- frontend API address: `http://backend:8000`
+- browser-facing Streamlit address: `http://localhost:${STREAMLIT_PORT:-8501}`
+- browser-facing API address: `http://localhost:${API_PORT:-8000}`
+
+`POSTGRES_HOST_PORT` changes only the host mapping for PostgreSQL. Set it to `5433` if port 5432 is already occupied. The backend always uses the container's internal port 5432.
+
+### Dataset and first startup
+
+Place the nine original Olist CSVs in `data/raw/`, or retain a complete generated set in `data/processed/`. Neither directory is copied into an image; Compose mounts `data/` read-only into the one-shot initializer.
+
+Start the complete application:
+
+```bash
+docker compose up --build
+```
+
+On an empty volume, `db-init` reuses `src/data_processing.py` when processed files are absent and then calls the transactional `src/load_postgres.py` loader. On later starts it detects all populated Olist tables, skips the CSV load, and reapplies the analytical views. It deliberately refuses a partially populated database instead of risking duplicate or inconsistent rows.
+
+Startup ordering is health-based: PostgreSQL must pass `pg_isready`, database initialization must complete successfully, FastAPI must pass `/health/ready`, and only then does Streamlit start. No arbitrary sleep is used.
+
+Open:
+
+- Streamlit: `http://localhost:8501`
+- FastAPI: `http://localhost:8000`
+- OpenAPI docs: `http://localhost:8000/docs`
+- API liveness: `http://localhost:8000/health`
+- dependency readiness: `http://localhost:8000/health/ready`
+
+Run detached and inspect service state with:
+
+```bash
+docker compose up --build -d
+docker compose ps
+docker compose logs -f backend
+```
+
+Other useful logs are available with `docker compose logs db-init`, `docker compose logs db`, and `docker compose logs frontend`. The API key and database password are not written to application logs.
+
+### Stop, restart, and reset
+
+Stop the containers while preserving PostgreSQL data:
+
+```bash
+docker compose down
+```
+
+The named `postgres_data` volume survives that command, so the next `docker compose up` does not reload the dataset. To intentionally delete the containerized database and force a clean initialization:
+
+```bash
+docker compose down -v
+```
+
+**Warning:** `-v` permanently deletes the Compose PostgreSQL volume and all database data inside it. It does not delete the mounted source CSVs.
+
+### Troubleshooting
+
+- `docker: command not found`: install/start Docker Desktop, then open a new terminal.
+- host port already allocated: change `POSTGRES_HOST_PORT`, `API_PORT`, or `STREAMLIT_PORT` in `.env`.
+- `db-init` reports missing files: provide all nine raw CSVs or all nine processed CSVs, then rerun `docker compose up`.
+- `db-init` reports a partial database: inspect the data, or reset only the Compose volume with `docker compose down -v` if deletion is intended.
+- backend remains unhealthy: inspect `docker compose logs backend`; `/health/ready` requires PostgreSQL connectivity and valid Gemini environment configuration but does not call Gemini or consume quota.
+- frontend reports the API unavailable: confirm `docker compose ps` shows the backend as healthy and that Compose injects `BACKEND_API_URL=http://backend:8000`.
+
+### Local development remains supported
+
+Docker is optional. The existing local workflow is unchanged:
+
+```bash
+uvicorn src.api.main:app --reload --host 0.0.0.0 --port 8000
+streamlit run app.py
+```
+
+The root `requirements.txt` installs the complete development/test environment. The two files under `requirements/` keep the backend and frontend images smaller without introducing a second application architecture.
