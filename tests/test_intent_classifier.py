@@ -18,6 +18,11 @@ class FakeLLM:
         return self.response
 
 
+class FailingLLM:
+    def generate(self, prompt: str) -> str:
+        raise TimeoutError("provider timeout")
+
+
 def test_classifier_validates_structured_hybrid_route() -> None:
     llm = FakeLLM(
         '```json\n{"intent":"hybrid","tasks":["historical_analytics",'
@@ -97,3 +102,55 @@ def test_repeat_purchase_request_fails_closed_instead_of_using_delivery_model() 
 
     assert decision.intent == "unsupported"
     assert decision.tasks == []
+
+
+@pytest.mark.parametrize(
+    ("question", "task", "dataset"),
+    [
+        (
+            "What is the 95% confidence interval for average order value?",
+            "confidence_interval",
+            "average_order_value",
+        ),
+        (
+            "Is average review score significantly different between delayed and on-time deliveries?",
+            "hypothesis_test",
+            "review_score_by_delivery_status",
+        ),
+        (
+            "Did treatment outperform control significantly in the A/B experiment?",
+            "ab_test",
+            "synthetic_conversion_demo",
+        ),
+    ],
+)
+def test_statistical_questions_have_safe_fallback_routing(
+    question: str,
+    task: str,
+    dataset: str,
+) -> None:
+    decision = IntentClassifier(FailingLLM()).classify(question)
+
+    assert decision.intent == "stats"
+    assert [routed.value for routed in decision.tasks] == [task]
+    assert decision.statistical_dataset == dataset
+
+
+def test_sample_size_parameters_are_extracted_without_calculating_result() -> None:
+    decision = IntentClassifier(FailingLLM()).classify(
+        "If conversion improves from 8% to 10%, how many users do we need per group?"
+    )
+
+    assert decision.intent == "stats"
+    assert decision.tasks[0] == "sample_size_estimation"
+    assert decision.baseline == pytest.approx(0.08)
+    assert decision.minimum_detectable_effect == pytest.approx(0.02)
+
+
+def test_state_hypothesis_extracts_supported_groups() -> None:
+    decision = IntentClassifier(FailingLLM()).classify(
+        "Is average order value significantly different between SP and RJ?"
+    )
+
+    assert decision.statistical_dataset == "order_value_by_customer_state"
+    assert (decision.group_a, decision.group_b) == ("SP", "RJ")

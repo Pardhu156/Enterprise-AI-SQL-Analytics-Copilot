@@ -1,1 +1,1 @@
-"""Versioned analytics, prediction, and operational routes."""
+"""Versioned analytics, prediction, statistics, and operational routes."""

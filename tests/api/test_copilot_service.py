@@ -2,7 +2,7 @@ import pytest
 
 from src.api.errors import APIError
 from src.api.schemas.requests import CopilotQueryRequest
-from src.api.schemas.responses import MLPredictionResponse
+from src.api.schemas.responses import MLPredictionResponse, StatisticalAnalysisResponse
 from src.api.services.copilot_service import CopilotService
 from src.routing.intent_classifier import IntentDecision
 
@@ -49,6 +49,28 @@ class ML:
 
     def delivery_risk(self, order_id: str):
         raise AssertionError("not requested")
+
+
+class Statistics:
+    def __init__(self) -> None:
+        self.datasets: list[str] = []
+
+    def olist_confidence_interval(self, dataset, **parameters):
+        self.datasets.append(dataset.value)
+        return StatisticalAnalysisResponse(
+            task="confidence_interval",
+            dataset=dataset.value,
+            source="Olist PostgreSQL observational data",
+            description="Order value interval.",
+            result={
+                "point_estimate": 100.0,
+                "lower": 98.0,
+                "upper": 102.0,
+                "confidence_level": parameters["confidence_level"],
+                "interpretation": "The interval is 98 to 102.",
+            },
+            limitations=[],
+        )
 
 
 def test_hybrid_route_uses_sql_subquestion_and_model_prediction() -> None:
@@ -99,3 +121,27 @@ def test_unsupported_route_fails_cleanly() -> None:
         service.query(CopilotQueryRequest(question="Write a poem"), "request-3")
 
     assert captured.value.code == "UNSUPPORTED_INTENT"
+
+
+def test_statistical_route_invokes_python_statistics_service() -> None:
+    statistics = Statistics()
+    service = CopilotService(
+        Classifier(
+            {
+                "intent": "stats",
+                "tasks": ["confidence_interval"],
+                "statistical_dataset": "average_order_value",
+                "confidence_level": 0.95,
+            }
+        ),
+        Analytics(),
+        ML(),
+        statistics,
+    )
+
+    response = service.query(CopilotQueryRequest(question="Give me the interval"), "request-4")
+
+    assert statistics.datasets == ["average_order_value"]
+    assert response.route.intent == "stats"
+    assert response.statistical_analyses[0].result["point_estimate"] == 100.0
+    assert "98 to 102" in response.answer

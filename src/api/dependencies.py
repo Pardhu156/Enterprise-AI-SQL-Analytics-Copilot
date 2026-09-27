@@ -19,12 +19,14 @@ from src.db_config import DatabaseConfig
 from src.ml.config import MLSettings
 from src.ml.service import MLInferenceService
 from src.routing.intent_classifier import IntentClassifier
+from src.statistical.service import StatisticalAnalysisService
 from src.text_to_sql.llm_client import LLMClient, LLMConfig, create_llm_client
 from src.text_to_sql.pipeline import TextToSQLPipeline
 
 from .services.analytics_service import AnalyticsService
 from .services.copilot_service import CopilotService
 from .services.ml_service import MLService
+from .services.statistics_service import StatisticsService
 
 
 LOGGER = logging.getLogger(__name__)
@@ -88,11 +90,17 @@ def get_ml_service() -> MLService:
 
 
 @lru_cache(maxsize=1)
+def get_statistics_service() -> StatisticsService:
+    return StatisticsService(StatisticalAnalysisService())
+
+
+@lru_cache(maxsize=1)
 def get_copilot_service() -> CopilotService:
     return CopilotService(
         classifier=IntentClassifier(get_llm_client()),
         analytics=get_analytics_service(),
         ml=get_ml_service(),
+        statistics=get_statistics_service(),
     )
 
 

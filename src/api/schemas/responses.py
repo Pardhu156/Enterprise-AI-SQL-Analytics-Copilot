@@ -67,6 +67,15 @@ class MLPredictionResponse(BaseModel):
     limitations: list[str]
 
 
+class StatisticalAnalysisResponse(BaseModel):
+    task: str
+    dataset: str | None = None
+    source: str
+    description: str
+    result: dict[str, JsonValue]
+    limitations: list[str] = Field(default_factory=list)
+
+
 class RoutingDetails(BaseModel):
     intent: str
     tasks: list[str]
@@ -79,6 +88,7 @@ class CopilotQueryResponse(BaseModel):
     answer: str
     historical: AnalyticsQueryResponse | None = None
     predictions: list[MLPredictionResponse] = Field(default_factory=list)
+    statistical_analyses: list[StatisticalAnalysisResponse] = Field(default_factory=list)
 
 
 class ErrorDetails(BaseModel):

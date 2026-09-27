@@ -126,3 +126,28 @@ def test_frontend_client_validates_unified_copilot_response() -> None:
 
     assert response.route.intent == "ml"
     assert response.predictions[0].model == "xgboost"
+
+
+def test_frontend_client_validates_statistical_response() -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        assert request.url.path == "/api/v1/statistics/sample-size"
+        return httpx.Response(
+            200,
+            json={
+                "task": "sample_size_estimation",
+                "dataset": None,
+                "source": "User-supplied design assumptions",
+                "description": "Prospective power analysis.",
+                "result": {
+                    "required_sample_size_per_group": 4000,
+                    "total_required_sample_size": 8000,
+                },
+                "limitations": [],
+            },
+        )
+
+    response = make_client(handler).sample_size(
+        {"metric_type": "proportion", "baseline": 0.08, "minimum_detectable_effect": 0.02}
+    )
+
+    assert response.result["required_sample_size_per_group"] == 4000

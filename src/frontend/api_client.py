@@ -8,7 +8,11 @@ from dataclasses import dataclass
 import httpx
 from dotenv import load_dotenv
 
-from src.api.schemas.responses import AnalyticsQueryResponse, CopilotQueryResponse
+from src.api.schemas.responses import (
+    AnalyticsQueryResponse,
+    CopilotQueryResponse,
+    StatisticalAnalysisResponse,
+)
 
 
 @dataclass(frozen=True)
@@ -66,11 +70,34 @@ class AnalyticsAPIClient:
             CopilotQueryResponse,
         )
 
+    def hypothesis_test(self, payload: dict) -> StatisticalAnalysisResponse:
+        return self._post_json(
+            "/api/v1/statistics/hypothesis-test", payload, StatisticalAnalysisResponse
+        )
+
+    def confidence_interval(self, payload: dict) -> StatisticalAnalysisResponse:
+        return self._post_json(
+            "/api/v1/statistics/confidence-interval", payload, StatisticalAnalysisResponse
+        )
+
+    def ab_test(self, payload: dict) -> StatisticalAnalysisResponse:
+        return self._post_json(
+            "/api/v1/statistics/ab-test", payload, StatisticalAnalysisResponse
+        )
+
+    def sample_size(self, payload: dict) -> StatisticalAnalysisResponse:
+        return self._post_json(
+            "/api/v1/statistics/sample-size", payload, StatisticalAnalysisResponse
+        )
+
     def _post(self, path: str, question: str, response_model):
+        return self._post_json(path, {"question": question}, response_model)
+
+    def _post_json(self, path: str, payload: dict, response_model):
         try:
             response = self._client.post(
                 path,
-                json={"question": question},
+                json=payload,
             )
         except httpx.TimeoutException as exc:
             raise FrontendAPIError(

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+from collections.abc import Callable
 from decimal import Decimal
 from typing import Any
 
@@ -15,6 +16,7 @@ from src.api.schemas.responses import (
     AnalyticsQueryResponse,
     CopilotQueryResponse,
     MLPredictionResponse,
+    StatisticalAnalysisResponse,
 )
 from src.frontend.api_client import AnalyticsAPIClient, FrontendAPIError
 
@@ -32,6 +34,9 @@ SAMPLE_QUESTIONS = (
     "Predict revenue for the next 4 weeks.",
     "Show the customer segments.",
     "Compare total historical revenue with the next 4 weeks forecast.",
+    "What is the 95% confidence interval for average order value?",
+    "Is the average review score significantly different between delayed and on-time deliveries?",
+    "If conversion improves from 8% to 10%, how many users do we need per group?",
 )
 
 
@@ -167,6 +172,8 @@ def render_copilot_result(response: CopilotQueryResponse) -> None:
         render_result(response.historical, show_answer=False)
     for prediction in response.predictions:
         render_prediction(prediction)
+    for analysis in response.statistical_analyses:
+        render_statistical_analysis(analysis)
     st.caption(f"Unified request ID: {response.request_id}")
 
 
@@ -234,6 +241,143 @@ def render_prediction(prediction: MLPredictionResponse) -> None:
             st.caption(f"• {limitation}")
 
 
+def render_statistical_analysis(analysis: StatisticalAnalysisResponse) -> None:
+    st.markdown("### Statistical analysis")
+    st.caption(f"Task: {analysis.task} · Source: {analysis.source}")
+    st.write(analysis.description)
+    result = analysis.result
+    if analysis.task == "hypothesis_test":
+        effect = result.get("effect_size") or {}
+        interval = result.get("confidence_interval") or {}
+        with st.container(horizontal=True):
+            st.metric("Test", str(result.get("test_used", "—")), border=True)
+            st.metric("p-value", _format_probability(result.get("p_value")), border=True)
+            st.metric(
+                "Decision",
+                "Significant" if result.get("significant") else "Not significant",
+                border=True,
+            )
+            st.metric(
+                str(effect.get("name", "Effect size")).replace("_", " ").title(),
+                _format_number(effect.get("value")),
+                border=True,
+            )
+        st.info(str(result.get("interpretation", "")))
+        if interval:
+            st.caption(
+                f"{float(interval['confidence_level']):.0%} CI: "
+                f"[{float(interval['lower']):.4f}, {float(interval['upper']):.4f}]"
+            )
+        summaries = result.get("group_summaries")
+        if summaries:
+            st.dataframe(pd.DataFrame(summaries).T.reset_index(names="Group"), hide_index=True)
+    elif analysis.task == "confidence_interval":
+        with st.container(horizontal=True):
+            st.metric("Point estimate", _format_number(result.get("point_estimate")), border=True)
+            st.metric("Lower bound", _format_number(result.get("lower")), border=True)
+            st.metric("Upper bound", _format_number(result.get("upper")), border=True)
+            st.metric(
+                "Confidence",
+                f"{float(result.get('confidence_level', 0)):.0%}",
+                border=True,
+            )
+        st.info(str(result.get("interpretation", "")))
+    elif analysis.task == "ab_test":
+        test_result = result.get("test_result") or {}
+        effect = test_result.get("effect_size") or {}
+        interval = test_result.get("confidence_interval") or {}
+        with st.container(horizontal=True):
+            st.metric("Control", _format_number(result.get("control_metric")), border=True)
+            st.metric("Treatment", _format_number(result.get("treatment_metric")), border=True)
+            st.metric("Absolute lift", _format_number(result.get("absolute_lift")), border=True)
+            relative = result.get("relative_lift")
+            st.metric(
+                "Relative lift",
+                f"{float(relative):.2%}" if relative is not None else "—",
+                border=True,
+            )
+        with st.container(horizontal=True):
+            st.metric("Test", str(test_result.get("test_used", "—")), border=True)
+            st.metric("p-value", _format_probability(test_result.get("p_value")), border=True)
+            st.metric(
+                "Decision",
+                "Significant" if result.get("statistically_significant") else "Not significant",
+                border=True,
+            )
+            st.metric(
+                str(effect.get("name", "Effect size")).replace("_", " ").title(),
+                _format_number(effect.get("value")),
+                border=True,
+            )
+        if interval:
+            st.caption(
+                f"{float(interval['confidence_level']):.0%} CI for treatment minus control: "
+                f"[{float(interval['lower']):.4f}, {float(interval['upper']):.4f}]"
+            )
+        chart = pd.DataFrame(
+            {
+                "Group": ["Control", "Treatment"],
+                "Metric": [result.get("control_metric"), result.get("treatment_metric")],
+            }
+        )
+        st.bar_chart(chart, x="Group", y="Metric")
+        if result.get("synthetic_demo"):
+            st.warning("Synthetic demonstration only — this is not Olist business evidence.")
+        st.info(str(result.get("recommendation", "")))
+    elif analysis.task == "sample_size_estimation":
+        with st.container(horizontal=True):
+            st.metric(
+                "Required per group",
+                f"{int(result['required_sample_size_per_group']):,}",
+                border=True,
+            )
+            st.metric(
+                "Total required",
+                f"{int(result['total_required_sample_size']):,}",
+                border=True,
+            )
+        st.caption(str(result.get("method", "")))
+        st.json(result.get("assumptions", {}))
+    if analysis.limitations:
+        with st.expander("Assumptions and limitations"):
+            for limitation in analysis.limitations:
+                st.caption(f"• {limitation}")
+
+
+def _format_probability(value: Any) -> str:
+    if value is None:
+        return "—"
+    number = float(value)
+    return f"{number:.3e}" if number < 0.001 else f"{number:.4f}"
+
+
+def _format_number(value: Any) -> str:
+    return "—" if value is None else f"{float(value):,.4f}"
+
+
+def _parse_number_list(value: str) -> list[float]:
+    parsed = [float(item.strip()) for item in value.split(",") if item.strip()]
+    if len(parsed) < 2:
+        raise ValueError("Enter at least two comma-separated numbers per group.")
+    return parsed
+
+
+def submit_statistical_request(
+    method_name: str,
+    payload: dict | Callable[[], dict],
+) -> None:
+    st.session_state.pop("statistical_result", None)
+    try:
+        request_payload = payload() if callable(payload) else payload
+        method = getattr(build_api_client(), method_name)
+        with st.spinner("Running the statistical calculation in Python…"):
+            st.session_state["statistical_result"] = method(request_payload)
+    except FrontendAPIError as exc:
+        st.error(exc.message)
+    except ValueError as exc:
+        st.error(str(exc))
+
+
 def _display_frame(columns: list[str], rows: list[list[Any]]) -> pd.DataFrame:
     frame = pd.DataFrame(rows, columns=columns)
     return frame.map(lambda value: float(value) if isinstance(value, Decimal) else value)
@@ -270,8 +414,8 @@ st.markdown(
     """
     <div class="hero">
       <h1>Enterprise AI SQL Analytics Copilot</h1>
-      <p>Ask historical or predictive business questions in plain language. Gemini routes the request,
-      while validated PostgreSQL and trained ML models produce the actual results.</p>
+      <p>Ask historical, predictive, or statistical business questions in plain language. Gemini routes
+      the request while PostgreSQL, trained ML models, and Python statistics produce the results.</p>
     </div>
     """,
     unsafe_allow_html=True,
@@ -291,7 +435,7 @@ if sample_clicked:
     st.session_state["question_input"] = sample_clicked
 
 question = st.text_input(
-    "Ask a historical or predictive business question",
+    "Ask a historical, predictive, or statistical business question",
     key="question_input",
     placeholder="e.g. Compare total historical revenue with the next 4 weeks forecast.",
 )
@@ -321,7 +465,207 @@ if analyze_clicked or sample_clicked:
 if "api_analytics_result" in st.session_state:
     render_copilot_result(st.session_state["api_analytics_result"])
 
+st.markdown('<div class="section-label">Statistical analysis tools</div>', unsafe_allow_html=True)
+st.caption(
+    "Use explicit samples or experiment assumptions below. All calculations run in Python; "
+    "Gemini does not create p-values, intervals, or sample sizes."
+)
+hypothesis_tab, interval_tab, ab_tab, sample_tab = st.tabs(
+    ["Hypothesis test", "Confidence interval", "A/B test", "Sample size"]
+)
+
+with hypothesis_tab:
+    hypothesis_type = st.segmented_control(
+        "Metric type",
+        ["Continuous", "Proportion"],
+        default="Continuous",
+        key="hypothesis_type",
+    )
+    with st.form("hypothesis_form", border=True):
+        if hypothesis_type == "Continuous":
+            group_a_values = st.text_input("Group A values", value="10, 12, 11, 13, 12")
+            group_b_values = st.text_input("Group B values", value="8, 9, 10, 9, 8")
+        else:
+            count_row = st.columns(4)
+            successes_a = count_row[0].number_input("A successes", min_value=0, value=80)
+            trials_a = count_row[1].number_input("A trials", min_value=1, value=1000)
+            successes_b = count_row[2].number_input("B successes", min_value=0, value=100)
+            trials_b = count_row[3].number_input("B trials", min_value=1, value=1000)
+        hypothesis_alpha = st.number_input(
+            "Significance level", min_value=0.001, max_value=0.2, value=0.05, format="%.3f"
+        )
+        hypothesis_submitted = st.form_submit_button(
+            "Run hypothesis test", type="primary", icon=":material/science:"
+        )
+    if hypothesis_submitted:
+        if hypothesis_type == "Continuous":
+            submit_statistical_request(
+                "hypothesis_test",
+                lambda: {
+                    "analysis_type": "continuous",
+                    "group_a_values": _parse_number_list(group_a_values),
+                    "group_b_values": _parse_number_list(group_b_values),
+                    "alpha": hypothesis_alpha,
+                },
+            )
+        else:
+            submit_statistical_request(
+                "hypothesis_test",
+                {
+                    "analysis_type": "proportion",
+                    "successes_a": successes_a,
+                    "trials_a": trials_a,
+                    "successes_b": successes_b,
+                    "trials_b": trials_b,
+                    "alpha": hypothesis_alpha,
+                },
+            )
+
+with interval_tab:
+    interval_type = st.segmented_control(
+        "Interval type",
+        ["Mean", "Proportion"],
+        default="Mean",
+        key="interval_type",
+    )
+    with st.form("interval_form", border=True):
+        if interval_type == "Mean":
+            interval_values = st.text_input(
+                "Observed values", value="100, 120, 110, 130, 115, 125"
+            )
+        else:
+            interval_counts = st.columns(2)
+            interval_successes = interval_counts[0].number_input(
+                "Successes", min_value=0, value=80
+            )
+            interval_trials = interval_counts[1].number_input(
+                "Trials", min_value=1, value=1000
+            )
+        confidence_level = st.number_input(
+            "Confidence level", min_value=0.5, max_value=0.999, value=0.95, format="%.3f"
+        )
+        interval_submitted = st.form_submit_button(
+            "Calculate interval", type="primary", icon=":material/straighten:"
+        )
+    if interval_submitted:
+        if interval_type == "Mean":
+            submit_statistical_request(
+                "confidence_interval",
+                lambda: {
+                    "confidence_level": confidence_level,
+                    "estimand": "mean",
+                    "values": _parse_number_list(interval_values),
+                },
+            )
+        else:
+            submit_statistical_request(
+                "confidence_interval",
+                {
+                    "confidence_level": confidence_level,
+                    "estimand": "proportion",
+                    "successes": interval_successes,
+                    "trials": interval_trials,
+                },
+            )
+
+with ab_tab:
+    ab_metric = st.segmented_control(
+        "Experiment metric",
+        ["Conversion", "Average value"],
+        default="Conversion",
+        key="ab_metric",
+    )
+    with st.form("ab_form", border=True):
+        if ab_metric == "Conversion":
+            ab_counts = st.columns(4)
+            control_successes = ab_counts[0].number_input(
+                "Control successes", min_value=0, value=800
+            )
+            control_trials = ab_counts[1].number_input(
+                "Control trials", min_value=1, value=10000
+            )
+            treatment_successes = ab_counts[2].number_input(
+                "Treatment successes", min_value=0, value=900
+            )
+            treatment_trials = ab_counts[3].number_input(
+                "Treatment trials", min_value=1, value=10000
+            )
+        else:
+            control_values = st.text_input("Control values", value="100, 105, 98, 110, 102")
+            treatment_values = st.text_input(
+                "Treatment values", value="108, 112, 105, 115, 110"
+            )
+        randomized = st.checkbox("This was a randomized experiment", value=False)
+        ab_submitted = st.form_submit_button(
+            "Analyze experiment", type="primary", icon=":material/experiment:"
+        )
+    if ab_submitted:
+        if ab_metric == "Conversion":
+            submit_statistical_request(
+                "ab_test",
+                {
+                    "randomized_experiment": randomized,
+                    "metric_type": "conversion",
+                    "control_successes": control_successes,
+                    "control_trials": control_trials,
+                    "treatment_successes": treatment_successes,
+                    "treatment_trials": treatment_trials,
+                },
+            )
+        else:
+            submit_statistical_request(
+                "ab_test",
+                lambda: {
+                    "randomized_experiment": randomized,
+                    "metric_type": "average_value",
+                    "control_values": _parse_number_list(control_values),
+                    "treatment_values": _parse_number_list(treatment_values),
+                },
+            )
+
+with sample_tab:
+    sample_metric = st.segmented_control(
+        "Planning metric",
+        ["Proportion", "Mean"],
+        default="Proportion",
+        key="sample_metric",
+    )
+    with st.form("sample_size_form", border=True):
+        sample_fields = st.columns(3)
+        baseline = sample_fields[0].number_input("Baseline", value=0.08, format="%.4f")
+        detectable_effect = sample_fields[1].number_input(
+            "Minimum detectable effect", value=0.02, format="%.4f"
+        )
+        if sample_metric == "Mean":
+            standard_deviation = sample_fields[2].number_input(
+                "Standard deviation", min_value=0.0001, value=1.0, format="%.4f"
+            )
+        else:
+            power = sample_fields[2].number_input(
+                "Statistical power", min_value=0.5, max_value=0.99, value=0.8, format="%.2f"
+            )
+        if sample_metric == "Mean":
+            power = st.number_input(
+                "Statistical power", min_value=0.5, max_value=0.99, value=0.8, format="%.2f"
+            )
+        sample_submitted = st.form_submit_button(
+            "Estimate sample size", type="primary", icon=":material/groups:"
+        )
+    if sample_submitted:
+        payload = {
+            "metric_type": sample_metric.lower(),
+            "baseline": baseline,
+            "minimum_detectable_effect": detectable_effect,
+            "power": power,
+        }
+        if sample_metric == "Mean":
+            payload["standard_deviation"] = standard_deviation
+        submit_statistical_request("sample_size", payload)
+
+if "statistical_result" in st.session_state:
+    render_statistical_analysis(st.session_state["statistical_result"])
+
 st.divider()
 st.caption(
-    "Read-only analytics · Validated PostgreSQL · Persisted ML models · Gemini routes but never invents predictions"
+    "Read-only analytics · Validated PostgreSQL · Persisted ML models · Python statistical inference · Gemini routes but never invents results"
 )

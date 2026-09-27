@@ -1,12 +1,12 @@
 # Enterprise AI SQL Analytics Copilot
 
-**Status:** Stage A complete — unified historical SQL analytics and trained predictive ML
+**Status:** Stage 7B complete — historical SQL, predictive ML, and statistical analysis
 
 ## Overview
 
 Business users often know the question they need answered but not the database schema or SQL required to answer it. This project converts a natural-language business question into schema-aware PostgreSQL using Google Gemini, validates the generated statement against the live database schema, and executes it inside a bounded read-only transaction.
 
-Verified query results then flow through deterministic result analysis and chart selection. The same interface now routes predictive requests to persisted forecasting, RFM segmentation, and late-delivery models. Gemini classifies intent but never supplies a model prediction. Streamlit communicates exclusively with the versioned FastAPI backend.
+Verified query results then flow through deterministic result analysis and chart selection. The same interface routes predictive requests to persisted forecasting, RFM segmentation, and late-delivery models, and statistical requests to Python hypothesis tests, confidence intervals, A/B analysis, and power calculations. Gemini classifies intent but never supplies a model prediction or statistical result. Streamlit communicates exclusively with the versioned FastAPI backend.
 
 The complete system is reproducible with Docker Compose, measured against 22 manually verified Olist benchmark questions, and protected by GitHub Actions quality gates. It is a portfolio engineering project and is not affiliated with Olist.
 
@@ -23,8 +23,11 @@ flowchart LR
     G --> V["SQL safety validation"]
     V --> P["PostgreSQL"]
     R -->|"Predictive"| M["Persisted ML models"]
+    R -->|"Statistical"| ST["Python statistics engine"]
+    P --> ST
     P --> O["Business insight + visualization"]
     M --> O
+    ST --> O
 ```
 
 ## Key features
@@ -43,6 +46,8 @@ flowchart LR
 - K-Means RFM customer segmentation with cluster-quality evaluation
 - Leakage-safe late-delivery classification selected after a measured repeat-purchase feasibility gate
 - Gemini intent classification with deterministic SQL, ML, hybrid, and unsupported routing
+- Python-computed hypothesis tests, confidence intervals, A/B analysis, and sample-size estimates
+- SQL-plus-statistics workflows over real Olist data with explicit observational-data caveats
 
 ## Architecture
 
@@ -53,6 +58,7 @@ flowchart TD
     API --> IR["Gemini intent classifier"]
     IR --> AS["Analytics service"]
     IR --> MS["ML inference service"]
+    IR --> SS["Statistical analysis service"]
     AS --> T["Gemini Text-to-SQL"]
     T --> V["SQL safety validator"]
     V --> DB["PostgreSQL read-only execution"]
@@ -63,6 +69,8 @@ flowchart TD
     GI --> O["Structured API response"]
     P --> O
     MS --> O
+    DB --> SS
+    SS --> O
     O --> S
 ```
 
@@ -159,6 +167,7 @@ The processing step standardizes column labels, removes only exact duplicate row
 │   │   └── api_client.py            # typed Streamlit HTTP client
 │   ├── ml/                           # extraction, features, models, artifacts, inference
 │   ├── routing/                      # validated Gemini intent classification
+│   ├── statistical/                  # tests, intervals, A/B analysis, power, data access
 │   └── text_to_sql/
 │       ├── schema_manager.py        # live PostgreSQL introspection
 │       ├── prompt_builder.py        # generation and repair prompts
@@ -414,7 +423,7 @@ ruff check .
 python -m pytest -q --cov=src --cov-report=term-missing --cov-fail-under=70
 ```
 
-The final Stage A local run passed 115 tests with 75.42% measured source coverage. Tests cover SQL extraction and safety, read-only execution controls, bounded results, repair limits, analysis and chart selection, insight grounding, forecasting feature leakage, segmentation, production artifact enforcement, intent routing, API contracts and errors, frontend transport behavior, Docker initialization decisions, configuration validation, and initial Streamlit rendering. Gemini is mocked in unit tests, so the suite consumes no quota.
+The final Stage 7B local run passed 138 tests with 76.10% measured source coverage. Tests cover SQL extraction and safety, read-only execution controls, bounded results, repair limits, analysis and chart selection, insight grounding, forecasting feature leakage, segmentation, production artifact enforcement, statistical method selection and calculations, intent routing, API contracts and errors, frontend transport behavior, Docker initialization decisions, configuration validation, and initial Streamlit rendering. Gemini is mocked in unit tests, so the suite consumes no quota.
 
 ## Phase 3 — AI Business Insights & Interactive Visualization
 
@@ -482,10 +491,14 @@ flowchart TD
 - `GET /health` is a dependency-free liveness check.
 - `GET /health/ready` performs a lightweight `SELECT 1` against PostgreSQL, verifies Gemini configuration, and checks that all Stage A artifacts exist. It does not consume Gemini quota or run inference.
 - `POST /api/v1/analytics/query` accepts a natural-language question and returns the business answer, SQL metadata, real rows, deterministic analysis and visualization configuration, and SQL/total timing.
-- `POST /api/v1/copilot/query` classifies and deterministically executes SQL, ML, or hybrid workflows.
+- `POST /api/v1/copilot/query` classifies and deterministically executes SQL, ML, statistical, or hybrid workflows.
 - `GET /api/v1/ml/forecast?horizon_weeks=4` returns a recursive weekly revenue forecast.
 - `GET /api/v1/ml/segments` returns RFM cluster profiles; append a `customer_unique_id` for a customer lookup.
 - `GET /api/v1/ml/delivery-risk/{order_id}` returns a late-delivery probability from purchase-time features.
+- `POST /api/v1/statistics/hypothesis-test` selects and runs a test over supplied samples, counts, or a contingency table.
+- `POST /api/v1/statistics/confidence-interval` calculates an interval for a mean, proportion, mean difference, or proportion difference.
+- `POST /api/v1/statistics/ab-test` analyzes supplied conversion counts or average-value samples and applies a causal-language guard.
+- `POST /api/v1/statistics/sample-size` estimates equal-allocation sample sizes for two-proportion or two-mean studies.
 - `GET /docs` exposes FastAPI's interactive OpenAPI documentation.
 
 The analytics request strips whitespace, rejects empty questions, and limits questions to 2,000 characters. Optional flags can omit SQL, rows, or visualization metadata. Central exception handlers return stable error codes for validation, SQL safety rejection, database/Gemini availability, execution failure, and unexpected errors. Responses and logs include a request ID, while secrets, raw stack traces, passwords, and API keys are never returned.
@@ -708,7 +721,7 @@ git push origin v1.0.0
 
 Do not create the tag merely because the workflow is configured; create it after the pushed CI run and desired Docker smoke test succeed.
 
-## Stage A — ML-Based Predictive Analytics
+## Stage 7A — ML-Based Predictive Analytics
 
 Stage A extends the historical SQL copilot without allowing the LLM to invent predictions. Gemini returns a Pydantic-validated routing decision; deterministic Python then invokes the existing safe SQL pipeline, a persisted ML model, or both. Model training is offline and prediction requests only load immutable `joblib` artifacts.
 
@@ -757,7 +770,45 @@ Examples:
 - Delivery risk: `Predict late delivery risk for order <order_id>.`
 - Hybrid: `Compare total historical revenue with the next 2 weeks forecast.`
 
-The classifier supports `sql`, `ml`, `hybrid`, and `unsupported`. Identifiers and horizons are validated, unsupported questions fail closed, missing artifacts return `MODEL_UNAVAILABLE`, and all historical SQL still passes through the existing AST validator and read-only executor. `/health/ready` checks PostgreSQL, Gemini configuration, and the presence of all three trained artifacts without calling Gemini.
+The classifier supports `sql`, `ml`, `stats`, `hybrid`, and `unsupported`. Identifiers and horizons are validated, unsupported questions fail closed, missing artifacts return `MODEL_UNAVAILABLE`, and all historical SQL still passes through the existing AST validator and read-only executor. `/health/ready` checks PostgreSQL, Gemini configuration, and the presence of all three trained artifacts without calling Gemini.
+
+## Stage 7B — Statistical Analysis
+
+Stage 7B adds a reusable Python statistics engine without assigning numerical reasoning to Gemini. Gemini may classify a question and extract constrained parameters; fixed, parameterized PostgreSQL queries retrieve eligible observations, and SciPy/statsmodels compute every statistic, p-value, interval, effect size, and sample-size estimate.
+
+### Supported methods
+
+| Analysis | Methods and selection rules |
+|---|---|
+| Continuous two-group hypothesis test | Student t-test when normality is reasonable and Brown–Forsythe does not reject equal variance; Welch t-test for unequal variance; Mann–Whitney U for ordinal or non-normal outcomes |
+| Proportion/categorical hypothesis test | Two-proportion z-test when expected counts are sufficient; Fisher exact test for sparse 2×2 tables; chi-square with Cramér's V for suitable larger contingency tables |
+| Confidence intervals | Student t interval for a mean, Wilson interval for a proportion, Welch interval for a difference in means, and Newcombe interval for a difference in proportions |
+| A/B analysis | Conversion-rate and average-value comparisons with absolute/relative lift, effect size, confidence interval, significance decision, and evidence-bounded recommendation |
+| Experiment planning | Equal-allocation sample size for two independent proportions or means with configurable alpha, power, effect, and one/two-sided direction |
+
+Automatic selection inspects outcome scale, sample size, normality, variance, and expected cell counts. Invalid, empty, constant, or statistically unsuitable inputs are rejected rather than forced through a test. A non-significant result is described as failure to reject the null, not proof that groups are equal.
+
+### Olist-backed statistical questions
+
+The unified copilot supports these database-backed analyses:
+
+- average review score for delayed versus on-time deliveries;
+- average order value or delivery duration between two Brazilian states;
+- historical repeat-purchase proportions between two states;
+- confidence intervals for average order value, average review score, and delayed-delivery rate; and
+- sample-size planning from user-supplied assumptions.
+
+Olist comparisons are explicitly labeled observational and cannot establish causation. Because the dataset has no randomized treatment assignment, the natural-language A/B route uses a clearly labeled synthetic conversion demo only. The direct A/B endpoint accepts real user-supplied experiment data and only uses causal recommendation wording when randomization is confirmed.
+
+Example routed questions:
+
+- `What is the 95% confidence interval for average order value?`
+- `Is the average review score significantly different between delayed and on-time deliveries?`
+- `Is average order value different between SP and RJ customers?`
+- `If conversion improves from 8% to 10%, how many users do we need per group?`
+- `Show a synthetic A/B conversion test demo.`
+
+The Streamlit **Statistical analysis tools** section also accepts explicit continuous samples, conversion counts, confidence-interval inputs, experiment data, and power assumptions. Results display the selected method, p-value, interval, effect size, significance decision, assumptions, and limitations. The same contracts are available in `/docs` through the four `/api/v1/statistics/*` endpoints listed above.
 
 ## Future Enhancements
 
