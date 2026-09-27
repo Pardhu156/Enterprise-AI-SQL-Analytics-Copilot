@@ -27,6 +27,9 @@ anaconda_projects/
 data/raw/*.csv
 data/processed/*.csv
 evaluation/results/
+artifacts/models/*.joblib
+artifacts/models/*.tmp
+artifacts/ml_results.json
 
 # Editors and operating systems
 .DS_Store

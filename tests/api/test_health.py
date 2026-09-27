@@ -3,12 +3,20 @@ from src.api.dependencies import get_readiness_checker
 
 class ReadyChecker:
     def check(self):
-        return True, {"postgresql": "ok", "gemini_configuration": "ok"}
+        return True, {
+            "postgresql": "ok",
+            "gemini_configuration": "ok",
+            "ml_artifacts": "ok",
+        }
 
 
 class NotReadyChecker:
     def check(self):
-        return False, {"postgresql": "unavailable", "gemini_configuration": "ok"}
+        return False, {
+            "postgresql": "unavailable",
+            "gemini_configuration": "ok",
+            "ml_artifacts": "unavailable",
+        }
 
 
 def test_health_returns_ok(app_client) -> None:
@@ -26,7 +34,11 @@ def test_readiness_reports_lightweight_checks(app_client) -> None:
     assert response.status_code == 200
     assert response.json() == {
         "status": "ready",
-        "checks": {"postgresql": "ok", "gemini_configuration": "ok"},
+        "checks": {
+            "postgresql": "ok",
+            "gemini_configuration": "ok",
+            "ml_artifacts": "ok",
+        },
     }
 
 

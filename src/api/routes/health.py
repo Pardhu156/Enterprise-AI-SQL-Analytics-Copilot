@@ -18,7 +18,7 @@ def health() -> HealthResponse:
 @router.get(
     "/health/ready",
     response_model=ReadinessResponse,
-    summary="Database and Gemini configuration readiness",
+    summary="Database, Gemini configuration, and ML artifact readiness",
 )
 def readiness(
     checker: ReadinessChecker = Depends(get_readiness_checker),
@@ -34,4 +34,3 @@ def readiness(
         status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
         content=payload.model_dump(mode="json"),
     )
-

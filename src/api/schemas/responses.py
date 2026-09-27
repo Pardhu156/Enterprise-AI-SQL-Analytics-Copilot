@@ -58,6 +58,29 @@ class AnalyticsQueryResponse(BaseModel):
     execution: ExecutionDetails
 
 
+class MLPredictionResponse(BaseModel):
+    task: str
+    model: str
+    trained_at_utc: str
+    data: dict[str, JsonValue]
+    metrics: dict[str, JsonValue]
+    limitations: list[str]
+
+
+class RoutingDetails(BaseModel):
+    intent: str
+    tasks: list[str]
+
+
+class CopilotQueryResponse(BaseModel):
+    request_id: str
+    question: str
+    route: RoutingDetails
+    answer: str
+    historical: AnalyticsQueryResponse | None = None
+    predictions: list[MLPredictionResponse] = Field(default_factory=list)
+
+
 class ErrorDetails(BaseModel):
     code: str
     message: str

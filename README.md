@@ -1,12 +1,12 @@
 # Enterprise AI SQL Analytics Copilot
 
-**Status:** Complete — portfolio-ready implementation with measured evaluation and automated Docker Hub delivery
+**Status:** Stage A complete — unified historical SQL analytics and trained predictive ML
 
 ## Overview
 
 Business users often know the question they need answered but not the database schema or SQL required to answer it. This project converts a natural-language business question into schema-aware PostgreSQL using Google Gemini, validates the generated statement against the live database schema, and executes it inside a bounded read-only transaction.
 
-Verified query results then flow through deterministic result analysis and chart selection. Gemini produces a grounded business explanation from only the returned data, while Plotly renders the selected visualization. Streamlit provides the user interface and communicates exclusively with a versioned FastAPI backend.
+Verified query results then flow through deterministic result analysis and chart selection. The same interface now routes predictive requests to persisted forecasting, RFM segmentation, and late-delivery models. Gemini classifies intent but never supplies a model prediction. Streamlit communicates exclusively with the versioned FastAPI backend.
 
 The complete system is reproducible with Docker Compose, measured against 22 manually verified Olist benchmark questions, and protected by GitHub Actions quality gates. It is a portfolio engineering project and is not affiliated with Olist.
 
@@ -18,11 +18,13 @@ Business teams often depend on analysts to translate routine questions into SQL,
 
 ```mermaid
 flowchart LR
-    Q["Natural-language question"] --> G["Google Gemini Text-to-SQL"]
+    Q["Natural-language question"] --> R["Gemini intent router"]
+    R -->|"Historical"| G["Gemini Text-to-SQL"]
     G --> V["SQL safety validation"]
     V --> P["PostgreSQL"]
-    P --> I["Business insight"]
-    P --> C["Plotly visualization"]
+    R -->|"Predictive"| M["Persisted ML models"]
+    P --> O["Business insight + visualization"]
+    M --> O
 ```
 
 ## Key features
@@ -37,6 +39,10 @@ flowchart LR
 - Docker Compose orchestration with health checks and persistent PostgreSQL storage
 - GitHub Actions lint, tests, coverage, configuration validation, and Docker builds
 - Automatic quality-gated Docker Hub publishing on `main`, with optional version tags
+- XGBoost weekly revenue forecasting with chronological holdouts and recursive inference
+- K-Means RFM customer segmentation with cluster-quality evaluation
+- Leakage-safe late-delivery classification selected after a measured repeat-purchase feasibility gate
+- Gemini intent classification with deterministic SQL, ML, hybrid, and unsupported routing
 
 ## Architecture
 
@@ -44,7 +50,9 @@ flowchart LR
 flowchart TD
     U["User"] --> S["Streamlit frontend"]
     S -->|"HTTP"| API["FastAPI"]
-    API --> AS["Analytics service"]
+    API --> IR["Gemini intent classifier"]
+    IR --> AS["Analytics service"]
+    IR --> MS["ML inference service"]
     AS --> T["Gemini Text-to-SQL"]
     T --> V["SQL safety validator"]
     V --> DB["PostgreSQL read-only execution"]
@@ -54,6 +62,7 @@ flowchart TD
     RA --> P["Plotly visualization config"]
     GI --> O["Structured API response"]
     P --> O
+    MS --> O
     O --> S
 ```
 
@@ -110,6 +119,7 @@ The processing step standardizes column labels, removes only exact duplicate row
 │   ├── benchmark_questions.json     # structured Phase 1 benchmark suite
 │   ├── benchmark_summary.json       # committed real measured summary
 │   ├── resume_metrics.json          # compact measured release metrics
+│   ├── ml_results.json              # real Stage A training/evaluation metrics
 │   └── evaluate_text_to_sql.py      # execution-equivalence evaluator
 ├── .github/workflows/
 │   ├── ci.yml                        # lint, tests, coverage, config, image builds
@@ -124,6 +134,8 @@ The processing step standardizes column labels, removes only exact duplicate row
 │   ├── docker_init_db.py            # idempotent Compose database initializer
 │   ├── benchmark_api.py             # small live API latency benchmark
 │   ├── validate_environment.py      # secret-safe startup validation
+│   ├── train_ml_models.py           # offline model training and evaluation
+│   ├── report_ml_results.py         # metric summary and artifact consistency check
 │   └── test_api_integration.py      # optional live API smoke test
 ├── app.py                            # Streamlit analytics interface
 ├── src/
@@ -145,6 +157,8 @@ The processing step standardizes column labels, removes only exact duplicate row
 │   │   └── exception_handlers.py    # centralized safe errors
 │   ├── frontend/
 │   │   └── api_client.py            # typed Streamlit HTTP client
+│   ├── ml/                           # extraction, features, models, artifacts, inference
+│   ├── routing/                      # validated Gemini intent classification
 │   └── text_to_sql/
 │       ├── schema_manager.py        # live PostgreSQL introspection
 │       ├── prompt_builder.py        # generation and repair prompts
@@ -323,7 +337,7 @@ flowchart TD
 
 `SchemaManager` queries PostgreSQL metadata at runtime for public tables, views, columns, data types, primary keys, foreign keys, and relation comments. It serializes only this compact metadata for the LLM, so generated SQL targets the actual Phase 1 database rather than a duplicated hardcoded schema.
 
-The testable client protocol has one implementation: Google Gemini through the official `google-genai` Python SDK. `LLM_PROVIDER`, `LLM_MODEL`, and `LLM_API_KEY` configure it without hardcoding secrets. The example configuration uses `gemini-3.5-flash-lite`; quotas and model availability remain controlled by Google. Do not submit sensitive enterprise questions or schema details through consumer/free-tier services.
+The testable client protocol has one implementation: Google Gemini through the official `google-genai` Python SDK. `LLM_PROVIDER`, `LLM_MODEL`, and `LLM_API_KEY` configure it without hardcoding secrets. `LLM_REQUEST_TIMEOUT_SECONDS` bounds each provider call (45 seconds by default) and SDK retries are disabled so a timed-out frontend request does not leave minutes of hidden provider work. The example configuration uses `gemini-3.5-flash-lite`; quotas and model availability remain controlled by Google. Do not submit sensitive enterprise questions or schema details through consumer/free-tier services.
 
 ### Safety model
 
@@ -400,7 +414,7 @@ ruff check .
 python -m pytest -q --cov=src --cov-report=term-missing --cov-fail-under=70
 ```
 
-The final local run passed 84 tests with 77.62% measured source coverage. Tests cover SQL extraction and safety, read-only execution controls, bounded results, repair limits, analysis and chart selection, insight grounding, API contracts and errors, frontend transport behavior, Docker initialization decisions, configuration validation, and initial Streamlit rendering. Gemini is mocked in unit tests, so the suite consumes no quota.
+The final Stage A local run passed 115 tests with 75.42% measured source coverage. Tests cover SQL extraction and safety, read-only execution controls, bounded results, repair limits, analysis and chart selection, insight grounding, forecasting feature leakage, segmentation, production artifact enforcement, intent routing, API contracts and errors, frontend transport behavior, Docker initialization decisions, configuration validation, and initial Streamlit rendering. Gemini is mocked in unit tests, so the suite consumes no quota.
 
 ## Phase 3 — AI Business Insights & Interactive Visualization
 
@@ -466,8 +480,12 @@ flowchart TD
 ### API routes and contracts
 
 - `GET /health` is a dependency-free liveness check.
-- `GET /health/ready` performs a lightweight `SELECT 1` against PostgreSQL and verifies that Gemini configuration exists. It does not consume Gemini quota.
+- `GET /health/ready` performs a lightweight `SELECT 1` against PostgreSQL, verifies Gemini configuration, and checks that all Stage A artifacts exist. It does not consume Gemini quota or run inference.
 - `POST /api/v1/analytics/query` accepts a natural-language question and returns the business answer, SQL metadata, real rows, deterministic analysis and visualization configuration, and SQL/total timing.
+- `POST /api/v1/copilot/query` classifies and deterministically executes SQL, ML, or hybrid workflows.
+- `GET /api/v1/ml/forecast?horizon_weeks=4` returns a recursive weekly revenue forecast.
+- `GET /api/v1/ml/segments` returns RFM cluster profiles; append a `customer_unique_id` for a customer lookup.
+- `GET /api/v1/ml/delivery-risk/{order_id}` returns a late-delivery probability from purchase-time features.
 - `GET /docs` exposes FastAPI's interactive OpenAPI documentation.
 
 The analytics request strips whitespace, rejects empty questions, and limits questions to 2,000 characters. Optional flags can omit SQL, rows, or visualization metadata. Central exception handlers return stable error codes for validation, SQL safety rejection, database/Gemini availability, execution failure, and unexpected errors. Responses and logs include a request ID, while secrets, raw stack traces, passwords, and API keys are never returned.
@@ -514,6 +532,8 @@ flowchart TD
     A -->|"HTTPS"| G["Google Gemini API"]
     I["One-shot db-init service"] --> P["Existing Phase 1 processor and loader"]
     P --> D
+    M["One-shot ml-train service"] --> D
+    M --> A
     V["Named volume: postgres_data"] --- D
 ```
 
@@ -552,9 +572,9 @@ Start the complete application:
 docker compose up --build
 ```
 
-On an empty volume, `db-init` reuses `src/data_processing.py` when processed files are absent and then calls the transactional `src/load_postgres.py` loader. On later starts it detects all populated Olist tables, skips the CSV load, and reapplies the analytical views. It deliberately refuses a partially populated database instead of risking duplicate or inconsistent rows.
+On an empty volume, `db-init` reuses `src/data_processing.py` when processed files are absent and then calls the transactional `src/load_postgres.py` loader. The separate `ml-train` service trains missing Stage A artifacts into `artifacts/models/`; later starts detect those artifacts and skip retraining. The backend only performs inference.
 
-Startup ordering is health-based: PostgreSQL must pass `pg_isready`, database initialization must complete successfully, FastAPI must pass `/health/ready`, and only then does Streamlit start. No arbitrary sleep is used.
+Startup ordering is health-based: PostgreSQL must pass `pg_isready`, database and model initialization must complete successfully, FastAPI must pass `/health/ready`, and only then does Streamlit start. No arbitrary sleep is used.
 
 Open:
 
@@ -687,6 +707,57 @@ git push origin v1.0.0
 ```
 
 Do not create the tag merely because the workflow is configured; create it after the pushed CI run and desired Docker smoke test succeed.
+
+## Stage A — ML-Based Predictive Analytics
+
+Stage A extends the historical SQL copilot without allowing the LLM to invent predictions. Gemini returns a Pydantic-validated routing decision; deterministic Python then invokes the existing safe SQL pipeline, a persisted ML model, or both. Model training is offline and prediction requests only load immutable `joblib` artifacts.
+
+### Train the models
+
+With PostgreSQL populated and the environment active:
+
+```bash
+python scripts/train_ml_models.py --model all
+```
+
+Individual values for `--model` are `forecast`, `segmentation`, and `delivery`. Generated binaries live under `artifacts/models/` and are ignored by Git. `evaluation/ml_results.json` contains the committed real measured run. Docker Compose performs the same training in a one-shot `ml-train` service only when artifacts are absent and writes its runtime report to the ignored `artifacts/ml_results.json`.
+
+After training, validate that the saved artifacts match the selected models and print a concise evaluation summary without retraining:
+
+```bash
+python scripts/report_ml_results.py
+```
+
+Use `--metrics-only` when reviewing a committed metrics file on a machine where the ignored model artifacts have not been trained yet.
+
+The reviewed production promotion is explicit in `src/ml/config.py`: XGBoost for weekly revenue, K-Means with K=2 for RFM segmentation, and Logistic Regression for late-delivery risk. The registry rejects unknown artifacts or artifacts whose model identity/configuration does not match that promotion. Candidate metrics remain in `evaluation/ml_results.json`, but candidate estimators are not loaded by the API.
+
+### Implemented models and measured results
+
+| Task | Selected model | Honest evaluation |
+|---|---|---|
+| Weekly revenue forecasting | XGBoost | Validation RMSE R$47,449.36; untouched 8-week test MAE R$58,214.98 and RMSE R$68,868.07 |
+| Customer segmentation | K-Means, 2 clusters | Silhouette 0.7145; Davies–Bouldin 0.4768 across 94,983 eligible customers |
+| Late-delivery classification | Logistic Regression | Test precision 0.1053, recall 0.2769, F1 0.1526, ROC-AUC 0.6799, PR-AUC 0.1264 |
+
+Forecasting uses 74 leakage-safe supervised weekly observations after 13 lag/rolling warm-up rows. Model selection used validation data; the reported test period remained untouched until the final evaluation. Multi-step forecasting is recursive and capped at four weeks.
+
+RFM segmentation uses `customer_unique_id`, not the order-facing `customer_id`. The two measured groups are high-value repeat customers and one-time customers. More than 96% of eligible customers bought once, so this result is intentionally simpler than a forced multi-cluster story.
+
+Repeat-purchase prediction was rejected by a measured feasibility gate rather than trained on a misleading target: only 2,888 of 94,990 customers repeated overall (3.04%), and rolling 90-day active-customer labels were only 0.79–1.07% positive. The abrupt dataset end also right-censors future purchases. Late-delivery risk was selected as the alternative classification problem; its target has 7,826 positives among 96,470 eligible delivered orders (8.11%). No synthetic balancing rows or fabricated metrics were used.
+
+### Unified questions
+
+Examples:
+
+- Historical: `What is total revenue?`
+- Forecast: `Predict revenue for the next 4 weeks.`
+- Segments: `Show the customer segments.`
+- Customer lookup: `Which segment does customer <customer_unique_id> belong to?`
+- Delivery risk: `Predict late delivery risk for order <order_id>.`
+- Hybrid: `Compare total historical revenue with the next 2 weeks forecast.`
+
+The classifier supports `sql`, `ml`, `hybrid`, and `unsupported`. Identifiers and horizons are validated, unsupported questions fail closed, missing artifacts return `MODEL_UNAVAILABLE`, and all historical SQL still passes through the existing AST validator and read-only executor. `/health/ready` checks PostgreSQL, Gemini configuration, and the presence of all three trained artifacts without calling Gemini.
 
 ## Future Enhancements
 

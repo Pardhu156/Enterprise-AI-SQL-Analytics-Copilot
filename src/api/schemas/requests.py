@@ -22,3 +22,8 @@ class AnalyticsQueryRequest(BaseModel):
         description="Include the deterministic visualization specification.",
     )
 
+
+class CopilotQueryRequest(BaseModel):
+    question: Question = Field(
+        description="Historical, predictive, or hybrid business analytics question."
+    )

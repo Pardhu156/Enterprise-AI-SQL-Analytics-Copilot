@@ -16,10 +16,15 @@ from src.analytics.insight_generator import InsightGenerator
 from src.analytics.result_analyzer import ResultAnalyzer
 from src.analytics.visualization import VisualizationEngine
 from src.db_config import DatabaseConfig
-from src.text_to_sql.llm_client import LLMConfig, create_llm_client
+from src.ml.config import MLSettings
+from src.ml.service import MLInferenceService
+from src.routing.intent_classifier import IntentClassifier
+from src.text_to_sql.llm_client import LLMClient, LLMConfig, create_llm_client
 from src.text_to_sql.pipeline import TextToSQLPipeline
 
 from .services.analytics_service import AnalyticsService
+from .services.copilot_service import CopilotService
+from .services.ml_service import MLService
 
 
 LOGGER = logging.getLogger(__name__)
@@ -57,8 +62,13 @@ def get_api_settings() -> APISettings:
 
 
 @lru_cache(maxsize=1)
+def get_llm_client() -> LLMClient:
+    return create_llm_client()
+
+
+@lru_cache(maxsize=1)
 def get_analytics_service() -> AnalyticsService:
-    llm_client = create_llm_client()
+    llm_client = get_llm_client()
     text_to_sql = TextToSQLPipeline.from_env(llm_client=llm_client)
     pipeline = AnalyticsPipeline(
         text_to_sql=text_to_sql,
@@ -72,11 +82,26 @@ def get_analytics_service() -> AnalyticsService:
     return AnalyticsService(pipeline)
 
 
+@lru_cache(maxsize=1)
+def get_ml_service() -> MLService:
+    return MLService(MLInferenceService())
+
+
+@lru_cache(maxsize=1)
+def get_copilot_service() -> CopilotService:
+    return CopilotService(
+        classifier=IntentClassifier(get_llm_client()),
+        analytics=get_analytics_service(),
+        ml=get_ml_service(),
+    )
+
+
 class ReadinessChecker:
     def check(self) -> tuple[bool, dict[str, str]]:
         checks = {
             "postgresql": self._check_database(),
             "gemini_configuration": self._check_gemini_configuration(),
+            "ml_artifacts": self._check_ml_artifacts(),
         }
         return all(value == "ok" for value in checks.values()), checks
 
@@ -105,6 +130,20 @@ class ReadinessChecker:
             LOGGER.warning("Readiness Gemini configuration check failed: %s", type(exc).__name__)
             return "invalid"
 
+    @staticmethod
+    def _check_ml_artifacts() -> str:
+        try:
+            settings = MLSettings.from_env()
+            names = ("sales_forecast", "customer_segmentation", "delivery_risk")
+            return (
+                "ok"
+                if all(settings.artifact_path(name).is_file() for name in names)
+                else "unavailable"
+            )
+        except Exception as exc:
+            LOGGER.warning("Readiness ML artifact check failed: %s", type(exc).__name__)
+            return "unavailable"
+
 
 @lru_cache(maxsize=1)
 def get_readiness_checker() -> ReadinessChecker:
@@ -120,4 +159,3 @@ def _positive_int_env(name: str, default: int) -> int:
     if value <= 0:
         raise ValueError(f"{name} must be greater than zero")
     return value
-

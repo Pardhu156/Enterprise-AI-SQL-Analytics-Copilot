@@ -96,3 +96,33 @@ def test_frontend_client_maps_timeout() -> None:
     with pytest.raises(FrontendAPIError, match="timed out") as captured:
         make_client(handler).query("question")
     assert captured.value.code == "ANALYSIS_TIMEOUT"
+
+
+def test_frontend_client_validates_unified_copilot_response() -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        assert request.url.path == "/api/v1/copilot/query"
+        return httpx.Response(
+            200,
+            json={
+                "request_id": "request-2",
+                "question": "Predict revenue",
+                "route": {"intent": "ml", "tasks": ["sales_forecasting"]},
+                "answer": "The model predicts revenue.",
+                "historical": None,
+                "predictions": [
+                    {
+                        "task": "sales_forecasting",
+                        "model": "xgboost",
+                        "trained_at_utc": "2026-01-01T00:00:00+00:00",
+                        "data": {"horizon_weeks": 2, "total_predicted_revenue": 100.0},
+                        "metrics": {"rmse": 5.0},
+                        "limitations": ["Historical snapshot"],
+                    }
+                ],
+            },
+        )
+
+    response = make_client(handler).copilot_query("Predict revenue")
+
+    assert response.route.intent == "ml"
+    assert response.predictions[0].model == "xgboost"

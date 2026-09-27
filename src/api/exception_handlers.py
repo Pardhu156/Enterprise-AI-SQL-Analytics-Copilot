@@ -36,7 +36,7 @@ def register_exception_handlers(app: FastAPI) -> None:
         return _error_response(
             422,
             "REQUEST_VALIDATION_FAILED",
-            "The request body is invalid. Provide a non-empty question of at most 2000 characters.",
+            "The request body or parameters are invalid. Questions must be non-empty and identifiers must use the expected Olist format.",
             request_id,
         )
 
@@ -68,4 +68,3 @@ def _error_response(
             }
         },
     )
-

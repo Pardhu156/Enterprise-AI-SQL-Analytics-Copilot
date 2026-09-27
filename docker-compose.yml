@@ -48,19 +48,28 @@ services:
       LLM_PROVIDER: ${LLM_PROVIDER:-gemini}
       LLM_MODEL: ${LLM_MODEL:-gemini-3.5-flash-lite}
       LLM_API_KEY: ${LLM_API_KEY:?Set LLM_API_KEY in .env}
+      LLM_REQUEST_TIMEOUT_SECONDS: ${LLM_REQUEST_TIMEOUT_SECONDS:-45}
       SQL_STATEMENT_TIMEOUT_MS: ${SQL_STATEMENT_TIMEOUT_MS:-15000}
       SQL_MAX_ROWS: ${SQL_MAX_ROWS:-1000}
       INSIGHT_MAX_ROWS: ${INSIGHT_MAX_ROWS:-50}
       CHART_MAX_POINTS: ${CHART_MAX_POINTS:-100}
+      ML_ARTIFACT_DIR: /app/artifacts/models
+      ML_RESULTS_PATH: /app/artifacts/ml_results.json
+      ML_FORECAST_HORIZON_WEEKS: ${ML_FORECAST_HORIZON_WEEKS:-4}
+      ML_RANDOM_SEED: ${ML_RANDOM_SEED:-42}
       API_HOST: 0.0.0.0
       API_PORT: "8000"
       API_ALLOWED_ORIGINS: ${API_ALLOWED_ORIGINS:-http://localhost:8501,http://127.0.0.1:8501}
     ports:
       - "${API_PORT:-8000}:8000"
+    volumes:
+      - ./artifacts:/app/artifacts:ro
     depends_on:
       db:
         condition: service_healthy
       db-init:
+        condition: service_completed_successfully
+      ml-train:
         condition: service_completed_successfully
     healthcheck:
       test:
@@ -73,6 +82,30 @@ services:
       retries: 12
       start_period: 15s
     restart: unless-stopped
+
+  ml-train:
+    build:
+      context: .
+      dockerfile: Dockerfile.backend
+    command: ["python", "scripts/train_ml_models.py", "--model", "all", "--skip-existing"]
+    environment:
+      DB_HOST: db
+      DB_PORT: "5432"
+      DB_NAME: ${DB_NAME:-olist_analytics}
+      DB_USER: ${DB_USER:-postgres}
+      DB_PASSWORD: ${DB_PASSWORD:?Set DB_PASSWORD in .env}
+      ML_ARTIFACT_DIR: /app/artifacts/models
+      ML_RESULTS_PATH: /app/artifacts/ml_results.json
+      ML_FORECAST_HORIZON_WEEKS: ${ML_FORECAST_HORIZON_WEEKS:-4}
+      ML_RANDOM_SEED: ${ML_RANDOM_SEED:-42}
+    volumes:
+      - ./artifacts:/app/artifacts
+    depends_on:
+      db:
+        condition: service_healthy
+      db-init:
+        condition: service_completed_successfully
+    restart: "no"
 
   frontend:
     build:

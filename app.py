@@ -11,7 +11,11 @@ import streamlit as st
 
 from src.analytics.chart_selector import ChartConfig
 from src.analytics.visualization import VisualizationEngine
-from src.api.schemas.responses import AnalyticsQueryResponse
+from src.api.schemas.responses import (
+    AnalyticsQueryResponse,
+    CopilotQueryResponse,
+    MLPredictionResponse,
+)
 from src.frontend.api_client import AnalyticsAPIClient, FrontendAPIError
 
 
@@ -25,6 +29,9 @@ SAMPLE_QUESTIONS = (
     "What is the average order value?",
     "Which categories have the highest average review score?",
     "Are delayed deliveries associated with lower review scores?",
+    "Predict revenue for the next 4 weeks.",
+    "Show the customer segments.",
+    "Compare total historical revenue with the next 4 weeks forecast.",
 )
 
 
@@ -65,15 +72,16 @@ def build_api_client() -> AnalyticsAPIClient:
     return AnalyticsAPIClient()
 
 
-def render_result(response: AnalyticsQueryResponse) -> None:
-    st.markdown('<div class="section-label">AI Business Answer</div>', unsafe_allow_html=True)
-    if response.answer:
-        st.success(response.answer, icon="💡")
-    else:
-        st.warning(
-            "The query succeeded, but Gemini could not generate a business explanation. "
-            "The verified results are still shown below."
-        )
+def render_result(response: AnalyticsQueryResponse, show_answer: bool = True) -> None:
+    if show_answer:
+        st.markdown('<div class="section-label">AI Business Answer</div>', unsafe_allow_html=True)
+        if response.answer:
+            st.success(response.answer, icon="💡")
+        else:
+            st.warning(
+                "The query succeeded, but Gemini could not generate a business explanation. "
+                "The verified results are still shown below."
+            )
 
     visualization = response.visualization
     rows = response.result.rows or []
@@ -150,6 +158,82 @@ def render_result(response: AnalyticsQueryResponse) -> None:
     st.caption(f"Request ID: {response.request_id}")
 
 
+def render_copilot_result(response: CopilotQueryResponse) -> None:
+    route_label = response.route.intent.upper()
+    st.caption(f"Response type: {route_label} · Tasks: {', '.join(response.route.tasks)}")
+    st.success(response.answer, icon=":material/analytics:")
+    if response.historical:
+        st.markdown("### Historical analytics")
+        render_result(response.historical, show_answer=False)
+    for prediction in response.predictions:
+        render_prediction(prediction)
+    st.caption(f"Unified request ID: {response.request_id}")
+
+
+def render_prediction(prediction: MLPredictionResponse) -> None:
+    st.markdown("### Predictive analytics")
+    st.caption(
+        f"Task: {prediction.task} · Model: {prediction.model} · "
+        f"Trained: {prediction.trained_at_utc}"
+    )
+    if prediction.task == "sales_forecasting":
+        forecast = pd.DataFrame(prediction.data["forecast"])
+        history = pd.DataFrame(prediction.data["recent_history"])
+        history["week_start"] = pd.to_datetime(history["week_start"])
+        forecast["week_start"] = pd.to_datetime(forecast["week_start"])
+        chart = history.rename(columns={"revenue": "Historical revenue"}).merge(
+            forecast.rename(columns={"predicted_revenue": "Forecast revenue"}),
+            on="week_start",
+            how="outer",
+        )
+        with st.container(horizontal=True):
+            st.metric(
+                "Forecast revenue",
+                f"R$ {float(prediction.data['total_predicted_revenue']):,.2f}",
+                border=True,
+            )
+            st.metric(
+                "Prediction horizon",
+                f"{int(prediction.data['horizon_weeks'])} weeks",
+                border=True,
+            )
+        st.line_chart(
+            chart,
+            x="week_start",
+            y=["Historical revenue", "Forecast revenue"],
+            x_label="Week",
+            y_label="Revenue (R$)",
+        )
+        st.dataframe(forecast, hide_index=True)
+    elif prediction.task == "customer_segmentation":
+        if "profiles" in prediction.data:
+            profiles = pd.DataFrame(prediction.data["profiles"])
+            st.bar_chart(profiles, x="segment", y="customers", x_label="Segment")
+            st.dataframe(
+                profiles,
+                hide_index=True,
+                column_config={
+                    "monetary": st.column_config.NumberColumn(format="R$ %.2f"),
+                    "average_order_value": st.column_config.NumberColumn(format="R$ %.2f"),
+                },
+            )
+        else:
+            with st.container(horizontal=True):
+                st.metric("Segment", str(prediction.data["segment"]), border=True)
+                st.metric("Cluster", str(prediction.data["cluster"]), border=True)
+            st.json(prediction.data["rfm"])
+    elif prediction.task == "late_delivery_prediction":
+        probability = float(prediction.data["late_delivery_probability"])
+        with st.container(horizontal=True):
+            st.metric("Late-delivery probability", f"{probability:.1%}", border=True)
+            st.metric("Risk band", str(prediction.data["risk_band"]).title(), border=True)
+    with st.expander("Model metrics and limitations"):
+        if prediction.metrics:
+            st.json(prediction.metrics)
+        for limitation in prediction.limitations:
+            st.caption(f"• {limitation}")
+
+
 def _display_frame(columns: list[str], rows: list[list[Any]]) -> pd.DataFrame:
     frame = pd.DataFrame(rows, columns=columns)
     return frame.map(lambda value: float(value) if isinstance(value, Decimal) else value)
@@ -186,8 +270,8 @@ st.markdown(
     """
     <div class="hero">
       <h1>Enterprise AI SQL Analytics Copilot</h1>
-      <p>Ask a business question in plain language. Gemini generates safe PostgreSQL,
-      the database returns verified results, and the copilot builds a grounded insight and visualization.</p>
+      <p>Ask historical or predictive business questions in plain language. Gemini routes the request,
+      while validated PostgreSQL and trained ML models produce the actual results.</p>
     </div>
     """,
     unsafe_allow_html=True,
@@ -207,9 +291,9 @@ if sample_clicked:
     st.session_state["question_input"] = sample_clicked
 
 question = st.text_input(
-    "Ask your business data",
+    "Ask a historical or predictive business question",
     key="question_input",
-    placeholder="e.g. Which 10 product categories generated the most revenue?",
+    placeholder="e.g. Compare total historical revenue with the next 4 weeks forecast.",
 )
 analyze_clicked = st.button("Analyze", type="primary", width="stretch")
 
@@ -221,8 +305,8 @@ if analyze_clicked or sample_clicked:
         # Never leave a previous answer visible when a new analysis fails.
         st.session_state.pop("api_analytics_result", None)
         try:
-            with st.spinner("Generating safe SQL, querying PostgreSQL, and analyzing the result…"):
-                st.session_state["api_analytics_result"] = build_api_client().query(
+            with st.spinner("Routing the request and running verified SQL or trained models…"):
+                st.session_state["api_analytics_result"] = build_api_client().copilot_query(
                     submitted_question
                 )
         except FrontendAPIError as exc:
@@ -235,9 +319,9 @@ if analyze_clicked or sample_clicked:
             st.error("The frontend could not connect to the analytics API. Check .env and logs.")
 
 if "api_analytics_result" in st.session_state:
-    render_result(st.session_state["api_analytics_result"])
+    render_copilot_result(st.session_state["api_analytics_result"])
 
 st.divider()
 st.caption(
-    "Read-only analytics · PostgreSQL safety validation · Result-limited Gemini insights · No data is fabricated"
+    "Read-only analytics · Validated PostgreSQL · Persisted ML models · Gemini routes but never invents predictions"
 )

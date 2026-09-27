@@ -12,7 +12,9 @@ from fastapi.middleware.cors import CORSMiddleware
 from .dependencies import APISettings, get_api_settings
 from .exception_handlers import register_exception_handlers
 from .routes.analytics import router as analytics_router
+from .routes.copilot import router as copilot_router
 from .routes.health import router as health_router
+from .routes.ml import router as ml_router
 
 
 LOGGER = logging.getLogger(__name__)
@@ -34,10 +36,10 @@ def create_app(settings: APISettings | None = None) -> FastAPI:
     resolved = settings or get_api_settings()
     application = FastAPI(
         title="Enterprise AI SQL Analytics Copilot API",
-        version="1.0.0",
+        version="1.1.0",
         description=(
             "HTTP service for safe Gemini Text-to-SQL, PostgreSQL analytics, "
-            "grounded business insights, and deterministic visualization metadata."
+            "grounded business insights, predictive ML, and deterministic routing."
         ),
     )
     application.add_middleware(
@@ -68,6 +70,8 @@ def create_app(settings: APISettings | None = None) -> FastAPI:
     register_exception_handlers(application)
     application.include_router(health_router)
     application.include_router(analytics_router)
+    application.include_router(ml_router)
+    application.include_router(copilot_router)
     return application
 
 

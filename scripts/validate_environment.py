@@ -15,6 +15,7 @@ if str(PROJECT_ROOT) not in sys.path:
 from src.api.dependencies import APISettings  # noqa: E402
 from src.db_config import DatabaseConfig  # noqa: E402
 from src.frontend.api_client import FrontendAPIConfig  # noqa: E402
+from src.ml.config import MLSettings  # noqa: E402
 from src.text_to_sql.llm_client import LLMConfig  # noqa: E402
 
 
@@ -24,6 +25,7 @@ def validate_backend() -> None:
     if llm.provider != "gemini":
         raise ValueError("LLM_PROVIDER must be 'gemini'")
     APISettings.from_env()
+    MLSettings.from_env()
 
 
 def validate_frontend() -> None:

@@ -23,4 +23,5 @@ Thumbs.db
 notebooks
 tests
 evaluation/results
+artifacts/models
 data/**/*.csv

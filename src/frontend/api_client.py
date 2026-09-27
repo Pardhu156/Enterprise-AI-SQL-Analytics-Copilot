@@ -8,7 +8,7 @@ from dataclasses import dataclass
 import httpx
 from dotenv import load_dotenv
 
-from src.api.schemas.responses import AnalyticsQueryResponse
+from src.api.schemas.responses import AnalyticsQueryResponse, CopilotQueryResponse
 
 
 @dataclass(frozen=True)
@@ -53,9 +53,23 @@ class AnalyticsAPIClient:
         )
 
     def query(self, question: str) -> AnalyticsQueryResponse:
+        return self._post(
+            "/api/v1/analytics/query",
+            question,
+            AnalyticsQueryResponse,
+        )
+
+    def copilot_query(self, question: str) -> CopilotQueryResponse:
+        return self._post(
+            "/api/v1/copilot/query",
+            question,
+            CopilotQueryResponse,
+        )
+
+    def _post(self, path: str, question: str, response_model):
         try:
             response = self._client.post(
-                "/api/v1/analytics/query",
+                path,
                 json={"question": question},
             )
         except httpx.TimeoutException as exc:
@@ -72,7 +86,7 @@ class AnalyticsAPIClient:
         if response.is_error:
             raise _response_error(response)
         try:
-            return AnalyticsQueryResponse.model_validate(response.json())
+            return response_model.model_validate(response.json())
         except (ValueError, TypeError) as exc:
             raise FrontendAPIError(
                 "INVALID_API_RESPONSE",
@@ -93,4 +107,3 @@ def _response_error(response: httpx.Response) -> FrontendAPIError:
         message=str(payload.get("message", "The analytics request failed.")),
         request_id=payload.get("request_id"),
     )
-

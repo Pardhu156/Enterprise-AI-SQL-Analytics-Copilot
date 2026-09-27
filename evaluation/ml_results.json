@@ -1,0 +1,153 @@
+{
+  "trained_at_utc": "2026-09-27T12:45:05.990315+00:00",
+  "random_seed": 42,
+  "repeat_purchase_feasibility": {
+    "dataset_end": "2018-09-03T09:06:57",
+    "unique_customers": 94990,
+    "repeat_customers": 2888,
+    "overall_repeat_rate": 0.030403200336877566,
+    "rolling_90_day_active_customer_cohorts": [
+      {
+        "cutoff": "2017-09-01",
+        "eligible_customers": 10914,
+        "positive_customers": 117,
+        "positive_rate": 0.010720175920835623
+      },
+      {
+        "cutoff": "2017-12-01",
+        "eligible_customers": 15707,
+        "positive_customers": 144,
+        "positive_rate": 0.009167886929394537
+      },
+      {
+        "cutoff": "2018-03-01",
+        "eligible_customers": 19050,
+        "positive_customers": 183,
+        "positive_rate": 0.009606299212598425
+      },
+      {
+        "cutoff": "2018-06-01",
+        "eligible_customers": 20096,
+        "positive_customers": 159,
+        "positive_rate": 0.00791202229299363
+      }
+    ],
+    "decision": "use_late_delivery_prediction",
+    "reason": "Only about 3% of customers repeat anywhere in the snapshot, while leakage-safe 90-day cohort targets remain around 1% or lower. The abrupt dataset end also right-censors future purchases, making repeat-purchase deployment unreliable."
+  },
+  "sales_forecasting": {
+    "selected_model": "xgboost",
+    "observations": 74,
+    "train_rows": 58,
+    "validation_rows": 8,
+    "test_rows": 8,
+    "validation": {
+      "moving_average_4": {
+        "mae": 35759.148437500015,
+        "rmse": 51623.83689599504
+      },
+      "random_forest": {
+        "mae": 38615.74330210809,
+        "rmse": 48593.88681587328
+      },
+      "xgboost": {
+        "mae": 39313.884765625,
+        "rmse": 47449.35974219205
+      }
+    },
+    "test": {
+      "mae": 58214.97789062501,
+      "rmse": 68868.07257895604
+    }
+  },
+  "customer_segmentation": {
+    "customers": 94983,
+    "selected_clusters": 2,
+    "cluster_evaluation": {
+      "2": {
+        "silhouette": 0.7144590305308247,
+        "davies_bouldin": 0.4768458522956961,
+        "minimum_cluster_size": 2887
+      },
+      "3": {
+        "silhouette": 0.3912147832079384,
+        "davies_bouldin": 0.8813820420912725,
+        "minimum_cluster_size": 2887
+      },
+      "4": {
+        "silhouette": 0.38529395588712134,
+        "davies_bouldin": 0.7643967651072521,
+        "minimum_cluster_size": 2887
+      },
+      "5": {
+        "silhouette": 0.3482627094236251,
+        "davies_bouldin": 0.8318283856658386,
+        "minimum_cluster_size": 2887
+      },
+      "6": {
+        "silhouette": 0.3492647422215526,
+        "davies_bouldin": 0.7953982073590722,
+        "minimum_cluster_size": 2887
+      }
+    },
+    "profiles": [
+      {
+        "cluster": 0,
+        "customers": 92096,
+        "recency_days": 244.60605928126225,
+        "frequency": 1.0,
+        "monetary": 138.37661038481585,
+        "average_order_value": 138.37661038481585,
+        "segment": "One-time customers"
+      },
+      {
+        "cluster": 1,
+        "customers": 2887,
+        "recency_days": 227.20002445910148,
+        "frequency": 2.1139591271215794,
+        "monetary": 259.9474991340492,
+        "average_order_value": 122.97068910578895,
+        "segment": "High-value repeat"
+      }
+    ]
+  },
+  "classification": {
+    "task_selected": "late_delivery_prediction",
+    "reason": "Repeat purchase was not deployed because only about 3% of customers repeat overall and leakage-safe 90-day targets are below roughly 1%. Late delivery has a usable positive rate of 0.0811.",
+    "rows": 96470,
+    "positive_rate": 0.08112366538820359,
+    "selected_model": "logistic_regression",
+    "selection_rule": "Highest validation PR-AUC, preferring Logistic Regression when it is within 2% of the best score to reduce overfitting and artifact size.",
+    "selected_threshold": 0.6900000000000001,
+    "validation": {
+      "logistic_regression": {
+        "precision": 0.18824463860206514,
+        "recall": 0.30659767141009053,
+        "f1": 0.23326771653543307,
+        "roc_auc": 0.7523938679880137,
+        "pr_auc": 0.1410398543503362
+      },
+      "random_forest": {
+        "precision": 0.149438202247191,
+        "recall": 0.34411384217335056,
+        "f1": 0.20838229533881708,
+        "roc_auc": 0.735574668573141,
+        "pr_auc": 0.14376462745651528
+      },
+      "xgboost": {
+        "precision": 0.13369223867205024,
+        "recall": 0.3855109961190168,
+        "f1": 0.19853431045969352,
+        "roc_auc": 0.7192150555437442,
+        "pr_auc": 0.13343298487591862
+      }
+    },
+    "test": {
+      "precision": 0.10528406833531982,
+      "recall": 0.2769070010449321,
+      "f1": 0.15256188831318365,
+      "roc_auc": 0.6798737606992648,
+      "pr_auc": 0.1264121139833369
+    }
+  }
+}
