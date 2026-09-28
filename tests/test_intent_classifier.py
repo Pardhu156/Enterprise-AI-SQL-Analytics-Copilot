@@ -154,3 +154,22 @@ def test_state_hypothesis_extracts_supported_groups() -> None:
 
     assert decision.statistical_dataset == "order_value_by_customer_state"
     assert (decision.group_a, decision.group_b) == ("SP", "RJ")
+
+
+def test_forecast_explanation_question_still_routes_to_deployed_forecaster() -> None:
+    decision = IntentClassifier(FakeLLM('{"intent":"sql","tasks":["historical_analytics"]}')).classify(
+        "Why is revenue expected to decrease next month?"
+    )
+
+    assert decision.intent == "ml"
+    assert decision.tasks == ["sales_forecasting"]
+
+
+def test_delivery_rating_association_routes_to_statistical_engine() -> None:
+    decision = IntentClassifier(FailingLLM()).classify(
+        "Are delayed deliveries associated with lower ratings?"
+    )
+
+    assert decision.intent == "stats"
+    assert decision.tasks == ["hypothesis_test"]
+    assert decision.statistical_dataset == "review_score_by_delivery_status"

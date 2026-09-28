@@ -15,6 +15,8 @@ from src.analytics.chart_selector import ChartSelector
 from src.analytics.insight_generator import InsightGenerator
 from src.analytics.result_analyzer import ResultAnalyzer
 from src.analytics.visualization import VisualizationEngine
+from src.business.service import BusinessOverviewService
+from src.business.response_formatter import GroundedResponseFormatter
 from src.db_config import DatabaseConfig
 from src.ml.config import MLSettings
 from src.ml.service import MLInferenceService
@@ -24,6 +26,7 @@ from src.text_to_sql.llm_client import LLMClient, LLMConfig, create_llm_client
 from src.text_to_sql.pipeline import TextToSQLPipeline
 
 from .services.analytics_service import AnalyticsService
+from .services.business_service import BusinessService
 from .services.copilot_service import CopilotService
 from .services.ml_service import MLService
 from .services.statistics_service import StatisticsService
@@ -85,8 +88,18 @@ def get_analytics_service() -> AnalyticsService:
 
 
 @lru_cache(maxsize=1)
+def get_ml_inference_service() -> MLInferenceService:
+    return MLInferenceService()
+
+
+@lru_cache(maxsize=1)
 def get_ml_service() -> MLService:
-    return MLService(MLInferenceService())
+    return MLService(get_ml_inference_service())
+
+
+@lru_cache(maxsize=1)
+def get_business_service() -> BusinessService:
+    return BusinessService(BusinessOverviewService(ml=get_ml_inference_service()))
 
 
 @lru_cache(maxsize=1)
@@ -101,6 +114,7 @@ def get_copilot_service() -> CopilotService:
         analytics=get_analytics_service(),
         ml=get_ml_service(),
         statistics=get_statistics_service(),
+        formatter=GroundedResponseFormatter(get_llm_client()),
     )
 
 

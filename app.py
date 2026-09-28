@@ -1,4 +1,4 @@
-"""Streamlit interface for the Enterprise AI SQL Analytics Copilot."""
+"""Streamlit interface for the Enterprise AI SQL & Predictive Analytics Copilot."""
 
 from __future__ import annotations
 
@@ -14,6 +14,9 @@ from src.analytics.chart_selector import ChartConfig
 from src.analytics.visualization import VisualizationEngine
 from src.api.schemas.responses import (
     AnalyticsQueryResponse,
+    BusinessImpactMetric,
+    BusinessOverviewResponse,
+    BusinessRecommendationDetails,
     CopilotQueryResponse,
     MLPredictionResponse,
     StatisticalAnalysisResponse,
@@ -37,11 +40,13 @@ SAMPLE_QUESTIONS = (
     "What is the 95% confidence interval for average order value?",
     "Is the average review score significantly different between delayed and on-time deliveries?",
     "If conversion improves from 8% to 10%, how many users do we need per group?",
+    "Why is revenue expected to change over the next 4 weeks?",
+    "Which customer segment generates the most value and what should we consider doing?",
 )
 
 
 st.set_page_config(
-    page_title="Enterprise AI SQL Analytics Copilot",
+    page_title="Enterprise AI SQL & Predictive Analytics Copilot",
     page_icon="◈",
     layout="wide",
     initial_sidebar_state="collapsed",
@@ -167,13 +172,6 @@ def render_copilot_result(response: CopilotQueryResponse) -> None:
     route_label = response.route.intent.upper()
     st.caption(f"Response type: {route_label} · Tasks: {', '.join(response.route.tasks)}")
     st.success(response.answer, icon=":material/analytics:")
-    if response.historical:
-        st.markdown("### Historical analytics")
-        render_result(response.historical, show_answer=False)
-    for prediction in response.predictions:
-        render_prediction(prediction)
-    for analysis in response.statistical_analyses:
-        render_statistical_analysis(analysis)
     st.caption(f"Unified request ID: {response.request_id}")
 
 
@@ -344,6 +342,136 @@ def render_statistical_analysis(analysis: StatisticalAnalysisResponse) -> None:
                 st.caption(f"• {limitation}")
 
 
+def render_model_explanation(prediction: MLPredictionResponse) -> None:
+    explanation = prediction.explanation
+    if explanation is None:
+        st.info(f"{prediction.task.replace('_', ' ').title()} has no SHAP explanation.")
+        return
+    st.subheader(prediction.task.replace("_", " ").title())
+    st.caption(f"Method: {explanation.method} · Output: {explanation.output_space}")
+    contributions = pd.DataFrame(
+        [item.model_dump() for item in explanation.top_contributions]
+    )
+    if not contributions.empty:
+        contributions = contributions.sort_values("contribution")
+        st.bar_chart(
+            contributions,
+            x="feature",
+            y="contribution",
+            color="direction",
+            horizontal=True,
+            x_label="Model contribution",
+            y_label="Feature",
+        )
+        st.dataframe(
+            contributions,
+            hide_index=True,
+            column_config={
+                "feature_value": st.column_config.NumberColumn(format="%.4f"),
+                "contribution": st.column_config.NumberColumn(format="%.4f"),
+            },
+        )
+    importance = pd.DataFrame(
+        [item.model_dump() for item in explanation.global_importance]
+    )
+    if not importance.empty:
+        with st.expander("Global model importance"):
+            st.bar_chart(
+                importance.sort_values("importance"),
+                x="feature",
+                y="importance",
+                horizontal=True,
+                x_label="Mean absolute SHAP value",
+                y_label="Feature",
+            )
+    for limitation in explanation.limitations:
+        st.caption(f"• {limitation}")
+
+
+def render_impacts(impacts: list[BusinessImpactMetric]) -> None:
+    if not impacts:
+        st.info("No separate business-impact metric was calculated for this result.")
+        return
+    frame = pd.DataFrame([impact.model_dump() for impact in impacts])
+    st.dataframe(
+        frame,
+        hide_index=True,
+        column_config={
+            "value": st.column_config.NumberColumn(format="%.4f"),
+            "assumptions": st.column_config.ListColumn(),
+        },
+    )
+
+
+def render_recommendations(
+    recommendations: list[BusinessRecommendationDetails],
+) -> None:
+    if not recommendations:
+        st.info("Run a predictive or statistical analysis to generate evidence-based considerations.")
+        return
+    for recommendation in recommendations:
+        with st.container(border=True):
+            st.markdown(f"**{recommendation.title}** · `{recommendation.priority}` priority")
+            st.write(recommendation.action)
+            st.caption(recommendation.rationale)
+            for evidence in recommendation.evidence:
+                st.caption(f"• {evidence}")
+
+
+def render_business_overview(overview: BusinessOverviewResponse) -> None:
+    metrics = {metric.name: metric for metric in overview.observed_kpis}
+    forecast_impact = {metric.name: metric for metric in overview.forecast.impact}
+    with st.container(horizontal=True):
+        st.metric(
+            "Total revenue",
+            f"R$ {metrics['total_revenue'].value:,.2f}",
+            border=True,
+        )
+        st.metric(
+            "Order volume",
+            f"{metrics['order_volume'].value:,.0f}",
+            border=True,
+        )
+        st.metric(
+            "Average order value",
+            f"R$ {metrics['average_order_value'].value:,.2f}",
+            border=True,
+        )
+        st.metric(
+            "Delayed delivery rate",
+            f"{metrics['delayed_delivery_rate'].value:.2%}",
+            border=True,
+        )
+    with st.container(horizontal=True):
+        st.metric(
+            "Four-week forecast",
+            f"R$ {forecast_impact['forecast_revenue'].value:,.2f}",
+            delta=f"{forecast_impact['forecast_change_rate_vs_recent'].value:.2%} vs recent",
+            border=True,
+        )
+        st.metric(
+            "Customer segments",
+            str(overview.customer_segments.data["cluster_count"]),
+            border=True,
+        )
+        st.metric(
+            "Delivery-risk test PR-AUC",
+            f"{float(overview.classification_summary['test_metrics']['pr_auc']):.4f}",
+            border=True,
+        )
+    monthly = pd.DataFrame(overview.monthly_revenue)
+    monthly["month"] = pd.to_datetime(monthly["month"])
+    with st.container(border=True):
+        st.subheader("Historical monthly revenue")
+        st.line_chart(monthly, x="month", y="revenue", x_label="Month", y_label="Revenue (R$)")
+    profiles = pd.DataFrame(overview.customer_segments.data["profiles"])
+    with st.container(border=True):
+        st.subheader("Customer segment value")
+        st.bar_chart(profiles, x="segment", y="monetary", x_label="Segment", y_label="Average monetary value (R$)")
+    for limitation in overview.limitations:
+        st.caption(f"• {limitation}")
+
+
 def _format_probability(value: Any) -> str:
     if value is None:
         return "—"
@@ -413,7 +541,7 @@ def _compact_number(value: float) -> str:
 st.markdown(
     """
     <div class="hero">
-      <h1>Enterprise AI SQL Analytics Copilot</h1>
+      <h1>Enterprise AI SQL &amp; Predictive Analytics Copilot</h1>
       <p>Ask historical, predictive, or statistical business questions in plain language. Gemini routes
       the request while PostgreSQL, trained ML models, and Python statistics produce the results.</p>
     </div>
@@ -464,6 +592,121 @@ if analyze_clicked or sample_clicked:
 
 if "api_analytics_result" in st.session_state:
     render_copilot_result(st.session_state["api_analytics_result"])
+
+current_response: CopilotQueryResponse | None = st.session_state.get("api_analytics_result")
+(
+    overview_tab,
+    sql_tab,
+    predictive_tab,
+    segmentation_tab,
+    statistics_tab,
+    explainability_tab,
+    recommendations_tab,
+) = st.tabs(
+    [
+        "Executive overview",
+        "SQL analytics",
+        "Predictive analytics",
+        "Customer segmentation",
+        "Statistical analysis",
+        "Explainable AI",
+        "Business recommendations",
+    ]
+)
+
+with overview_tab:
+    st.caption(
+        "Observed Olist KPIs are kept separate from forecasts and scenario comparisons."
+    )
+    if st.button(
+        "Load executive overview",
+        icon=":material/dashboard:",
+        key="load_executive_overview",
+    ):
+        try:
+            with st.spinner("Loading observed KPIs and deployed-model summaries…"):
+                st.session_state["business_overview"] = (
+                    build_api_client().business_overview()
+                )
+        except FrontendAPIError as exc:
+            st.error(exc.message)
+    if "business_overview" in st.session_state:
+        render_business_overview(st.session_state["business_overview"])
+    else:
+        st.info("Load the overview to retrieve current PostgreSQL and model outputs.")
+
+with sql_tab:
+    if current_response and current_response.historical:
+        render_result(current_response.historical, show_answer=False)
+    else:
+        st.info("Ask a historical or hybrid question to view validated SQL and real rows here.")
+
+with predictive_tab:
+    predictions = (
+        [
+            item
+            for item in current_response.predictions
+            if item.task != "customer_segmentation"
+        ]
+        if current_response
+        else []
+    )
+    if predictions:
+        for prediction in predictions:
+            render_prediction(prediction)
+    else:
+        st.info("Ask for a revenue forecast or late-delivery risk prediction.")
+
+with segmentation_tab:
+    segment_predictions = (
+        [
+            item
+            for item in current_response.predictions
+            if item.task == "customer_segmentation"
+        ]
+        if current_response
+        else []
+    )
+    if segment_predictions:
+        for prediction in segment_predictions:
+            render_prediction(prediction)
+            interpretations = prediction.data.get("interpretations")
+            if interpretations:
+                st.dataframe(pd.DataFrame(interpretations), hide_index=True)
+    else:
+        st.info("Ask to show customer segments or provide a customer_unique_id.")
+
+with statistics_tab:
+    if current_response and current_response.statistical_analyses:
+        for analysis in current_response.statistical_analyses:
+            render_statistical_analysis(analysis)
+    else:
+        st.info("Ask a statistical question or use the explicit calculators below.")
+
+with explainability_tab:
+    explained = (
+        [item for item in current_response.predictions if item.explanation]
+        if current_response
+        else []
+    )
+    if explained:
+        for prediction in explained:
+            render_model_explanation(prediction)
+    else:
+        st.info("Run a forecast or late-delivery prediction to view actual SHAP values.")
+
+with recommendations_tab:
+    if current_response:
+        render_recommendations(current_response.business_recommendations)
+        for result in [
+            *current_response.predictions,
+            *current_response.statistical_analyses,
+        ]:
+            if result.impact:
+                st.subheader(f"{result.task.replace('_', ' ').title()} impact")
+                render_impacts(result.impact)
+    else:
+        st.info("Run an analysis to generate evidence-bounded business considerations.")
 
 st.markdown('<div class="section-label">Statistical analysis tools</div>', unsafe_allow_html=True)
 st.caption(
@@ -664,6 +907,8 @@ with sample_tab:
 
 if "statistical_result" in st.session_state:
     render_statistical_analysis(st.session_state["statistical_result"])
+    render_recommendations(st.session_state["statistical_result"].recommendations)
+    render_impacts(st.session_state["statistical_result"].impact)
 
 st.divider()
 st.caption(

@@ -1,12 +1,12 @@
-# Enterprise AI SQL Analytics Copilot
+# Enterprise AI SQL & Predictive Analytics Copilot
 
-**Status:** Stage 7B complete — historical SQL, predictive ML, and statistical analysis
+**Status:** Stage 7C complete — explainable decision intelligence over SQL, ML, and statistics
 
 ## Overview
 
 Business users often know the question they need answered but not the database schema or SQL required to answer it. This project converts a natural-language business question into schema-aware PostgreSQL using Google Gemini, validates the generated statement against the live database schema, and executes it inside a bounded read-only transaction.
 
-Verified query results then flow through deterministic result analysis and chart selection. The same interface routes predictive requests to persisted forecasting, RFM segmentation, and late-delivery models, and statistical requests to Python hypothesis tests, confidence intervals, A/B analysis, and power calculations. Gemini classifies intent but never supplies a model prediction or statistical result. Streamlit communicates exclusively with the versioned FastAPI backend.
+Verified query results then flow through deterministic result analysis and chart selection. The same interface routes predictive requests to persisted forecasting, RFM segmentation, and late-delivery models, and statistical requests to Python hypothesis tests, confidence intervals, A/B analysis, and power calculations. Stage 7C adds model-grounded SHAP explanations, observed/predicted/scenario impact metrics, and evidence-bounded business recommendations. Gemini classifies intent and formats validated outputs but never supplies a SQL result, model prediction, SHAP value, p-value, or business-impact calculation. Streamlit communicates exclusively with the versioned FastAPI backend.
 
 The complete system is reproducible with Docker Compose, measured against 22 manually verified Olist benchmark questions, and protected by GitHub Actions quality gates. It is a portfolio engineering project and is not affiliated with Olist.
 
@@ -28,6 +28,10 @@ flowchart LR
     P --> O["Business insight + visualization"]
     M --> O
     ST --> O
+    M --> X["SHAP explainability"]
+    O --> B["Impact + recommendation rules"]
+    X --> B
+    B --> F["Grounded Gemini formatting"]
 ```
 
 ## Key features
@@ -48,6 +52,11 @@ flowchart LR
 - Gemini intent classification with deterministic SQL, ML, hybrid, and unsupported routing
 - Python-computed hypothesis tests, confidence intervals, A/B analysis, and sample-size estimates
 - SQL-plus-statistics workflows over real Olist data with explicit observational-data caveats
+- TreeSHAP forecast explanations and Linear SHAP late-delivery explanations from deployed models
+- Data-derived, persisted customer-segment labels and business interpretations
+- Deterministic business-impact calculations that separate observed, predicted, and scenario values
+- Evidence-bounded recommendation rules plus guarded Gemini response formatting
+- Seven-section executive, SQL, predictive, segmentation, statistics, explainability, and recommendation dashboard
 
 ## Architecture
 
@@ -70,7 +79,12 @@ flowchart TD
     P --> O
     MS --> O
     DB --> SS
-    SS --> O
+    MS --> XAI["SHAP explainability"]
+    R --> BI["Impact and recommendation services"]
+    SS --> BI
+    XAI --> BI
+    BI --> GF["Grounded Gemini formatter"]
+    GF --> O
     O --> S
 ```
 
@@ -165,6 +179,8 @@ The processing step standardizes column labels, removes only exact duplicate row
 │   │   └── exception_handlers.py    # centralized safe errors
 │   ├── frontend/
 │   │   └── api_client.py            # typed Streamlit HTTP client
+│   ├── business/                     # KPIs, impact, segments, recommendations, formatting
+│   ├── explainability/               # TreeSHAP and Linear SHAP over deployed models
 │   ├── ml/                           # extraction, features, models, artifacts, inference
 │   ├── routing/                      # validated Gemini intent classification
 │   ├── statistical/                  # tests, intervals, A/B analysis, power, data access
@@ -423,7 +439,7 @@ ruff check .
 python -m pytest -q --cov=src --cov-report=term-missing --cov-fail-under=70
 ```
 
-The final Stage 7B local run passed 138 tests with 76.10% measured source coverage. Tests cover SQL extraction and safety, read-only execution controls, bounded results, repair limits, analysis and chart selection, insight grounding, forecasting feature leakage, segmentation, production artifact enforcement, statistical method selection and calculations, intent routing, API contracts and errors, frontend transport behavior, Docker initialization decisions, configuration validation, and initial Streamlit rendering. Gemini is mocked in unit tests, so the suite consumes no quota.
+The final Stage 7C local run passed 150 tests with 76.21% measured source coverage. Tests cover SQL extraction and safety, read-only execution controls, bounded results, repair limits, analysis and chart selection, insight grounding, forecasting feature leakage, segmentation, production artifact enforcement, statistical calculations, actual SHAP additivity, impact and recommendation rules, intent routing, API contracts and errors, frontend transport behavior, Docker initialization decisions, configuration validation, and initial Streamlit rendering. Gemini is mocked in unit tests, so the suite consumes no quota.
 
 ## Phase 3 — AI Business Insights & Interactive Visualization
 
@@ -495,6 +511,7 @@ flowchart TD
 - `GET /api/v1/ml/forecast?horizon_weeks=4` returns a recursive weekly revenue forecast.
 - `GET /api/v1/ml/segments` returns RFM cluster profiles; append a `customer_unique_id` for a customer lookup.
 - `GET /api/v1/ml/delivery-risk/{order_id}` returns a late-delivery probability from purchase-time features.
+- `GET /api/v1/business/overview` returns observed KPIs, revenue history, an explained forecast, segment value, and the deployed classifier summary.
 - `POST /api/v1/statistics/hypothesis-test` selects and runs a test over supplied samples, counts, or a contingency table.
 - `POST /api/v1/statistics/confidence-interval` calculates an interval for a mean, proportion, mean difference, or proportion difference.
 - `POST /api/v1/statistics/ab-test` analyzes supplied conversion counts or average-value samples and applies a causal-language guard.
@@ -809,6 +826,56 @@ Example routed questions:
 - `Show a synthetic A/B conversion test demo.`
 
 The Streamlit **Statistical analysis tools** section also accepts explicit continuous samples, conversion counts, confidence-interval inputs, experiment data, and power assumptions. Results display the selected method, p-value, interval, effect size, significance decision, assumptions, and limitations. The same contracts are available in `/docs` through the four `/api/v1/statistics/*` endpoints listed above.
+
+## Stage 7C — Business Impact, Explainable AI, and Final Dashboard
+
+Stage 7C turns validated SQL, model, and statistical outputs into decision support without moving calculations into Gemini. The final routed flow is:
+
+```text
+Question → Gemini intent/parameter extraction → Python router
+         → SQL, ML, statistics, or hybrid execution
+         → SHAP + impact + deterministic recommendation services
+         → guarded Gemini wording → structured API response → Streamlit
+```
+
+### Explainability and segment interpretation
+
+- The deployed XGBoost revenue forecaster uses TreeSHAP on the actual recursive forecast feature rows. Responses include the baseline, model output, signed local contributions, and mean absolute global importance over historical model inputs.
+- The deployed logistic-regression late-delivery classifier uses Linear SHAP over its fitted preprocessing pipeline and real database-backed background observations. Responses expose the actual probability and the features increasing or decreasing it.
+- K-Means is not explained with SHAP. Its persisted cluster identities are interpreted from actual RFM cluster summaries relative to the customer population, keeping labels consistent between training and inference.
+
+SHAP explains model behavior rather than causality. Recursive forecast explanations apply to each generated step, and correlated features can share or redistribute apparent importance.
+
+### Business impact and recommendations
+
+The business layer keeps evidence types explicit: observed revenue and customer value, model predictions and risk probabilities, and scenario-based exposure estimates are separate typed metrics. Forecast comparisons use an equally sized recent historical window; segment contribution uses observed RFM monetary value; delivery exposure is probability-weighted order value and is labeled as an estimate, not guaranteed loss. A/B summaries report measured lift and uncertainty, while observational tests never use causal wording.
+
+Recommendations are deterministic rules driven by validated results, statistical significance, effect direction, segment characteristics, and SHAP drivers. Gemini receives only these bounded structured outputs and may improve wording. A numeric grounding guard rejects a formatted response that introduces a number absent from the supplied evidence and falls back to the deterministic response.
+
+### Final dashboard
+
+The Streamlit interface uses seven tabs: **Executive overview**, **SQL analytics**, **Predictive analytics**, **Customer segmentation**, **Statistical analysis**, **Explainable AI**, and **Business recommendations**. The executive overview is loaded on demand and combines real PostgreSQL KPIs, monthly revenue, the persisted forecast model, customer segment value, and the deployed late-delivery classifier summary. Model panels display signed SHAP contribution charts, impact metrics, limitations, and evidence-bounded actions.
+
+Example questions:
+
+- `What is total revenue?`
+- `Which 10 product categories generated the most revenue?`
+- `Why is revenue expected to change over the next 4 weeks?`
+- `Which customer segment generates the most value and what should we consider doing?`
+- `Predict late delivery risk for order <order_id> and explain why.`
+- `Is the average review score significantly different between delayed and on-time deliveries?`
+- `Are delayed deliveries associated with lower ratings and what should the business focus on?`
+- `Compare total historical revenue with the next 2 weeks forecast.`
+
+### Responsibility boundary and limitations
+
+Gemini performs intent classification, constrained parameter extraction, Text-to-SQL generation/repair, and response wording. PostgreSQL and Python perform every data retrieval, model prediction, SHAP calculation, statistical test, impact calculation, and recommendation rule evaluation.
+
+The Olist data is historical, finite, and not a randomized experiment. Its end date limits future-purchase labels and forecast generalization. Repeat-purchase prediction is therefore **not** deployed; the implemented supervised classification task is late-delivery risk. The classifier's measured PR-AUC is modest, so its output is decision support rather than an automated operational decision. The strict Text-to-SQL benchmark accuracy is 31.82%, despite 100% validation and execution success, making semantic SQL correctness the largest current limitation.
+
+### Screenshots
+
+Capture final UI screens under `docs/images/` before publishing if desired. No screenshot link is included here until a real repository image exists, avoiding broken or fabricated demo assets.
 
 ## Future Enhancements
 

@@ -8,6 +8,7 @@ import psycopg2
 
 from src.ml.artifacts import ModelArtifactError
 from src.ml.service import MLInferenceService, MLInputError
+from src.explainability.service import ExplainabilityError
 
 from ..errors import APIError
 from ..schemas.responses import MLPredictionResponse
@@ -39,6 +40,9 @@ class MLService:
         except ModelArtifactError as exc:
             LOGGER.warning("ML artifact unavailable: %s", exc)
             raise APIError(503, "MODEL_UNAVAILABLE", str(exc)) from exc
+        except ExplainabilityError as exc:
+            LOGGER.warning("Model explanation unavailable: %s", exc)
+            raise APIError(503, "EXPLANATION_UNAVAILABLE", str(exc)) from exc
         except MLInputError as exc:
             raise APIError(422, "ML_INPUT_INVALID", str(exc)) from exc
         except psycopg2.Error as exc:

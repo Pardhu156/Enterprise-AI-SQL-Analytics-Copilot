@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import psycopg2
 
+from src.business.impact import BusinessImpactService
+from src.business.recommendations import RecommendationService
 from src.statistical.ab_testing import (
     analyze_average_value_experiment,
     analyze_conversion_experiment,
@@ -35,8 +37,15 @@ from ..schemas.responses import StatisticalAnalysisResponse
 
 
 class StatisticsService:
-    def __init__(self, analysis: StatisticalAnalysisService | None = None) -> None:
+    def __init__(
+        self,
+        analysis: StatisticalAnalysisService | None = None,
+        impact: BusinessImpactService | None = None,
+        recommendations: RecommendationService | None = None,
+    ) -> None:
         self._analysis = analysis or StatisticalAnalysisService()
+        self._impact = impact or BusinessImpactService()
+        self._recommendations = recommendations or RecommendationService()
 
     def hypothesis_test(self, request: HypothesisTestRequest) -> StatisticalAnalysisResponse:
         def calculate():
@@ -186,8 +195,7 @@ class StatisticsService:
     def olist_sample_size(self, **parameters) -> StatisticalAnalysisResponse:
         return self._safe_olist(self._analysis.sample_size, **parameters)
 
-    @staticmethod
-    def _safe_user_result(task, source, description, calculate, causal: bool = False):
+    def _safe_user_result(self, task, source, description, calculate, causal: bool = False):
         try:
             result = calculate()
         except StatisticalInputError as exc:
@@ -203,12 +211,17 @@ class StatisticsService:
             description=description,
             result=result,
             limitations=limitations,
+            impact=self._impact.statistical(task, result),
+            recommendations=self._recommendations.statistical(task, result),
         )
 
-    @staticmethod
-    def _safe_olist(function, *args, **kwargs) -> StatisticalAnalysisResponse:
+    def _safe_olist(self, function, *args, **kwargs) -> StatisticalAnalysisResponse:
         try:
             payload = function(*args, **kwargs)
+            task = payload["task"]
+            result = payload["result"]
+            payload["impact"] = self._impact.statistical(task, result)
+            payload["recommendations"] = self._recommendations.statistical(task, result)
             return StatisticalAnalysisResponse.model_validate(payload)
         except StatisticalInputError as exc:
             raise APIError(422, "STATISTICAL_INPUT_INVALID", str(exc)) from exc

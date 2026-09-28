@@ -10,6 +10,7 @@ from dotenv import load_dotenv
 
 from src.api.schemas.responses import (
     AnalyticsQueryResponse,
+    BusinessOverviewResponse,
     CopilotQueryResponse,
     StatisticalAnalysisResponse,
 )
@@ -90,12 +91,19 @@ class AnalyticsAPIClient:
             "/api/v1/statistics/sample-size", payload, StatisticalAnalysisResponse
         )
 
+    def business_overview(self) -> BusinessOverviewResponse:
+        return self._request("GET", "/api/v1/business/overview", None, BusinessOverviewResponse)
+
     def _post(self, path: str, question: str, response_model):
         return self._post_json(path, {"question": question}, response_model)
 
     def _post_json(self, path: str, payload: dict, response_model):
+        return self._request("POST", path, payload, response_model)
+
+    def _request(self, method: str, path: str, payload: dict | None, response_model):
         try:
-            response = self._client.post(
+            response = self._client.request(
+                method,
                 path,
                 json=payload,
             )

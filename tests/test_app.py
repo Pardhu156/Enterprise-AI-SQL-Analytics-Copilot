@@ -9,7 +9,7 @@ def test_streamlit_app_renders_without_external_calls() -> None:
 
     assert not app.exception
     assert any(
-        "Enterprise AI SQL Analytics Copilot" in markdown.value
+        "Enterprise AI SQL" in markdown.value and "Predictive Analytics Copilot" in markdown.value
         for markdown in app.markdown
     )
     assert any(button.label == "Analyze" for button in app.button)

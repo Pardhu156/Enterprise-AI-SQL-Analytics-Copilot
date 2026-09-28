@@ -73,6 +73,12 @@ class Statistics:
         )
 
 
+class Formatter:
+    def format(self, question: str, fallback: str, payload: dict) -> str:
+        assert payload["business_recommendations"][0]["title"]
+        return fallback
+
+
 def test_hybrid_route_uses_sql_subquestion_and_model_prediction() -> None:
     analytics = Analytics()
     ml = ML()
@@ -95,6 +101,26 @@ def test_hybrid_route_uses_sql_subquestion_and_model_prediction() -> None:
     assert ml.forecast_horizons == [2]
     assert response.route.intent == "hybrid"
     assert "R$ 250.00" in response.answer
+
+
+def test_hybrid_formatter_serializes_historical_recommendation() -> None:
+    service = CopilotService(
+        Classifier(
+            {
+                "intent": "hybrid",
+                "tasks": ["historical_analytics", "sales_forecasting"],
+                "sql_question": "What is total revenue?",
+                "horizon_weeks": 2,
+            }
+        ),
+        Analytics(),
+        ML(),
+        formatter=Formatter(),
+    )
+
+    response = service.query(CopilotQueryRequest(question="Compare both"), "request-1")
+
+    assert response.business_recommendations[0].title
 
 
 def test_delivery_route_requires_an_order_id() -> None:

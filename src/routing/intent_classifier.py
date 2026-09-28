@@ -161,6 +161,9 @@ Rules:
 - State comparisons require two uppercase state abbreviations in group_a and group_b.
 - "If conversion improves from 8% to 10%, how many users per group?" uses sample_size_estimation, metric_type=proportion, baseline=0.08, minimum_detectable_effect=0.02.
 - Olist has no randomized experiment. Generic treatment/control questions may use synthetic_conversion_demo only when clearly labeled as a demo.
+- Requests asking why a forecast changes still use sales_forecasting; Python supplies SHAP explanations.
+- Requests asking what to do with a segment still use customer_segmentation; Python supplies recommendations.
+- "Are delayed deliveries associated with lower ratings?" uses hypothesis_test and review_score_by_delivery_status.
 - Do not calculate, estimate, or invent any numerical answer.
 
 JSON shape:
@@ -209,7 +212,10 @@ def _reconcile_explicit_intent(
         return IntentDecision(intent=IntentType.UNSUPPORTED, tasks=[])
 
     explicit_task: RoutedTask | None = None
-    forecast_terms = re.search(r"\b(forecast|predict(?:ion|ed|ing)?)\b", lowered)
+    forecast_terms = re.search(
+        r"\b(forecast|predict(?:ion|ed|ing)?|expect(?:ed|ation)?)\b",
+        lowered,
+    )
     if forecast_terms and re.search(r"\b(revenue|sales)\b", lowered):
         explicit_task = RoutedTask.SALES_FORECASTING
     elif re.search(r"\b(customer\s+segments?|segment(?:ation)?)\b", lowered):
@@ -284,13 +290,15 @@ def _deterministic_statistical_intent(question: str) -> IntentDecision | None:
             )
 
     hypothesis_terms = re.search(
-        r"\b(significant|significantly|hypothesis|different between|difference between)\b",
+        r"\b(significant|significantly|hypothesis|different between|difference between|associated|association)\b",
         lowered,
     )
     if hypothesis_terms:
         dataset = None
         group_a = group_b = None
-        if "review" in lowered and ("delay" in lowered or "on-time" in lowered or "on time" in lowered):
+        if ("review" in lowered or "rating" in lowered) and (
+            "delay" in lowered or "on-time" in lowered or "on time" in lowered
+        ):
             dataset = StatisticalDataset.REVIEW_SCORE_BY_DELIVERY_STATUS
         elif len(states) >= 2 and "order value" in lowered:
             dataset = StatisticalDataset.ORDER_VALUE_BY_CUSTOMER_STATE

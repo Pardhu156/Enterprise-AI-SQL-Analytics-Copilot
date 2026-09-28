@@ -57,7 +57,7 @@ jobs:
           --cov-fail-under=70
 
       - name: Verify FastAPI import
-        run: python -c "from src.api.main import app; assert app.title == 'Enterprise AI SQL Analytics Copilot API'"
+        run: python -c "from src.api.main import app; assert app.title == 'Enterprise AI SQL & Predictive Analytics Copilot API'"
 
       - name: Validate runtime configuration
         run: python scripts/validate_environment.py all

@@ -25,7 +25,10 @@ class AnalyticsQueryRequest(BaseModel):
 
 class CopilotQueryRequest(BaseModel):
     question: Question = Field(
-        description="Historical, predictive, or hybrid business analytics question."
+        description=(
+            "Historical, predictive, statistical, explainability, recommendation, "
+            "or supported hybrid business question."
+        )
     )
 
 

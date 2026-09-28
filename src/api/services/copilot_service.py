@@ -8,11 +8,14 @@ from src.routing.intent_classifier import (
     IntentType,
     RoutedTask,
 )
+from src.business.response_formatter import GroundedResponseFormatter
+from src.business.recommendations import RecommendationService
 
 from ..errors import APIError
 from ..schemas.requests import AnalyticsQueryRequest, CopilotQueryRequest
 from ..schemas.responses import (
     CopilotQueryResponse,
+    BusinessRecommendationDetails,
     MLPredictionResponse,
     RoutingDetails,
     StatisticalAnalysisResponse,
@@ -29,11 +32,15 @@ class CopilotService:
         analytics: AnalyticsService,
         ml: MLService,
         statistics: StatisticsService | None = None,
+        formatter: GroundedResponseFormatter | None = None,
+        recommendations: RecommendationService | None = None,
     ) -> None:
         self._classifier = classifier
         self._analytics = analytics
         self._ml = ml
         self._statistics = statistics or StatisticsService()
+        self._formatter = formatter
+        self._recommendations = recommendations or RecommendationService()
 
     def query(self, request: CopilotQueryRequest, request_id: str) -> CopilotQueryResponse:
         try:
@@ -112,6 +119,34 @@ class CopilotService:
                     )
                 )
 
+        recommendations = _collect_recommendations(predictions, statistical_analyses)
+        if historical:
+            recommendations = [
+                *self._recommendations.historical(
+                    historical.analysis.result_type,
+                    historical.result.row_count,
+                    historical.result.truncated,
+                ),
+                *recommendations,
+            ]
+        recommendations = [
+            BusinessRecommendationDetails.model_validate(recommendation)
+            for recommendation in recommendations
+        ]
+        fallback_answer = _combined_answer(
+            historical.answer if historical else None,
+            predictions,
+            statistical_analyses,
+        )
+        answer = (
+            self._formatter.format(
+                request.question,
+                fallback_answer,
+                _formatting_payload(historical, predictions, statistical_analyses, recommendations),
+            )
+            if self._formatter and (predictions or statistical_analyses)
+            else fallback_answer
+        )
         return CopilotQueryResponse(
             request_id=request_id,
             question=request.question,
@@ -119,14 +154,11 @@ class CopilotService:
                 intent=decision.intent.value,
                 tasks=[task.value for task in decision.tasks],
             ),
-            answer=_combined_answer(
-                historical.answer if historical else None,
-                predictions,
-                statistical_analyses,
-            ),
+            answer=answer,
             historical=historical,
             predictions=predictions,
             statistical_analyses=statistical_analyses,
+            business_recommendations=recommendations,
         )
 
 
@@ -171,3 +203,40 @@ def _combined_answer(
                 f"({total:,} total)."
             )
     return " ".join(part for part in parts if part) or "The request completed successfully."
+
+
+def _collect_recommendations(
+    predictions: list[MLPredictionResponse],
+    statistical_analyses: list[StatisticalAnalysisResponse],
+) -> list[BusinessRecommendationDetails]:
+    return [
+        recommendation
+        for result in [*predictions, *statistical_analyses]
+        for recommendation in result.recommendations
+    ]
+
+
+def _formatting_payload(
+    historical,
+    predictions: list[MLPredictionResponse],
+    statistical_analyses: list[StatisticalAnalysisResponse],
+    recommendations: list[BusinessRecommendationDetails],
+) -> dict:
+    historical_payload = None
+    if historical:
+        historical_payload = {
+            "answer": historical.answer,
+            "row_count": historical.result.row_count,
+            "result_type": historical.analysis.result_type,
+            "was_truncated": historical.result.truncated,
+        }
+    return {
+        "historical": historical_payload,
+        "predictions": [prediction.model_dump(mode="json") for prediction in predictions],
+        "statistical_evidence": [
+            analysis.model_dump(mode="json") for analysis in statistical_analyses
+        ],
+        "business_recommendations": [
+            recommendation.model_dump(mode="json") for recommendation in recommendations
+        ],
+    }

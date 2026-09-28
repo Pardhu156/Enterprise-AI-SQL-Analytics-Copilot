@@ -123,6 +123,11 @@ LATE_DELIVERY_ORDER_SQL = LATE_DELIVERY_SQL.replace(
     "AND o.order_id = %s\nORDER BY o.order_purchase_timestamp, o.order_id;",
 )
 
+LATE_DELIVERY_EXPLANATION_BACKGROUND_SQL = LATE_DELIVERY_SQL.replace(
+    "ORDER BY o.order_purchase_timestamp, o.order_id;",
+    "ORDER BY MD5(o.order_id)\nLIMIT %s;",
+)
+
 CUSTOMER_PURCHASE_HISTORY_SQL = """
 SELECT
     c.customer_unique_id,
@@ -180,6 +185,11 @@ class MLDataRepository:
 
     def late_delivery_order(self, order_id: str) -> pd.DataFrame:
         return self._query(LATE_DELIVERY_ORDER_SQL, (order_id,))
+
+    def late_delivery_explanation_background(self, limit: int = 256) -> pd.DataFrame:
+        if not 20 <= limit <= 2_000:
+            raise ValueError("Explanation background limit must be between 20 and 2000")
+        return self._query(LATE_DELIVERY_EXPLANATION_BACKGROUND_SQL, (limit,))
 
     def customer_purchase_history(self) -> pd.DataFrame:
         return self._query(CUSTOMER_PURCHASE_HISTORY_SQL)
